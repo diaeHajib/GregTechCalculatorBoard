@@ -45,7 +45,7 @@ public class ExpandModuleCommand implements BoardCommand {
         this.expandedNotes = expandedNotes != null ? new ArrayList<>(expandedNotes) : Collections.emptyList();
         this.capturedSubPage = capturedSubPage != null ? capturedSubPage
                 : ((moduleNode != null && moduleNode.getSubPageId() != null)
-                        ? BoardManager.getInstance().getPage(moduleNode.getSubPageId()).orElse(null)
+                        ? com.gtceu.calcboard.api.storage.WorkspacePageRegistry.resolvePage(moduleNode.getSubPageId())
                         : null);
     }
 
@@ -118,16 +118,14 @@ public class ExpandModuleCommand implements BoardCommand {
     }
 
     private void restoreSubPage() {
-        if (capturedSubPage != null && BoardManager.getInstance().getPage(capturedSubPage.getId()).isEmpty()) {
-            BoardManager.getInstance().getPageManager().addPage(capturedSubPage);
-        }
+        if (capturedSubPage == null) return;
+        com.gtceu.calcboard.api.storage.WorkspacePageRegistry.restoreModuleSubPage(capturedSubPage);
     }
 
     private void cleanUpSubPage() {
-        if (capturedSubPage != null) {
-            BoardManager.getInstance().removePage(capturedSubPage);
-        } else if (moduleNode != null && moduleNode.getSubPageId() != null) {
-            BoardManager.getInstance().removePage(moduleNode.getSubPageId());
+        String subPageId = capturedSubPage != null ? capturedSubPage.getId() : (moduleNode != null ? moduleNode.getSubPageId() : null);
+        if (subPageId != null) {
+            com.gtceu.calcboard.api.storage.WorkspacePageRegistry.removeModuleSubPage(subPageId);
         }
     }
 

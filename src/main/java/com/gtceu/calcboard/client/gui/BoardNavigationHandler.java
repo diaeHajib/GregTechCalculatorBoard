@@ -183,6 +183,16 @@ public class BoardNavigationHandler {
             screen.getCanvasHandler().getWireHandler().cancelWireDrag();
         }
 
+        com.gtceu.calcboard.client.team.ClientWorkspaceState teamState = com.gtceu.calcboard.client.team.ClientWorkspaceState.getInstance();
+        if (teamState.isTeamMode()) {
+            screen.openPage(subPageId);
+            TutorialManager.getInstance().onSubpageEntered();
+            ClientSafetyHelper.playSoundSafely(
+                SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.1F)
+            );
+            return;
+        }
+
         BoardPage current = BoardManager.getInstance().getActivePage();
         if (current != null) {
             current.setPanX(screen.getPanX());
@@ -207,7 +217,11 @@ public class BoardNavigationHandler {
     }
 
     public void returnToParentPage() {
-        BoardPage current = BoardManager.getInstance().getActivePage();
+        com.gtceu.calcboard.client.team.ClientWorkspaceState teamState = com.gtceu.calcboard.client.team.ClientWorkspaceState.getInstance();
+        boolean isTeam = teamState.isTeamMode();
+        BoardPage current = isTeam
+                ? teamState.getTeamPageAsBoardPage(teamState.getActiveTeamPageId())
+                : BoardManager.getInstance().getActivePage();
         if (current == null || !current.isModuleSubPage()) return;
 
         if (screen.getCanvasHandler() != null) {
@@ -221,6 +235,31 @@ public class BoardNavigationHandler {
 
         String parentPageId = current.getParentPageId();
         String parentModuleNodeId = current.getParentModuleNodeId();
+
+        if (isTeam) {
+            if (parentPageId == null || parentPageId.isEmpty() || teamState.getRemotePage(parentPageId) == null) {
+                screen.rebuildWidgets();
+                screen.markSummaryDirty();
+                return;
+            }
+            screen.openPage(parentPageId);
+            BoardPage parentPage = teamState.getTeamPageAsBoardPage(parentPageId);
+            if (parentPage != null) {
+                RecipeNode parentNode = parentPage.getGraph().findNodeById(parentModuleNodeId);
+                if (parentNode != null) {
+                    FlowGraphModuleHandler.syncModulePortsFromSubPage(parentNode, current);
+                    screen.setPanX((screen.width / 2.0) - (parentNode.getPosX() * screen.getZoom()));
+                    screen.setPanY((screen.height / 2.0) - (parentNode.getPosY() * screen.getZoom()));
+                }
+            }
+            screen.rebuildWidgets();
+            screen.markSummaryDirty();
+            TutorialManager.getInstance().onSubpageExited();
+            ClientSafetyHelper.playSoundSafely(
+                SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 0.9F)
+            );
+            return;
+        }
 
         if (parentPageId == null || parentPageId.isEmpty() || !BoardManager.getInstance().openPage(parentPageId)) {
             BoardManager.getInstance().cleanupOrphanSubpages();

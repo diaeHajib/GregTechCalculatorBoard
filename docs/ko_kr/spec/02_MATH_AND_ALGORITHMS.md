@@ -120,24 +120,39 @@ $$\text{Loss}_{\text{sec}} = \text{BaseLossRate} \times \left(\frac{\text{Actual
 $$T_{\text{lifespan}} = \frac{D_{\text{rotor}}}{\text{Loss}_{\text{sec}}} \quad (\text{단위: 초})$$
 $$\text{Rotor Replacement Rate (Items/hour)} = \frac{3600.0}{T_{\text{lifespan}}} \times \text{MachineCount}$$
 
-#### 공급 전력 기반 기계 가용 최대 병렬 ($P_{\max}$) 도출 수식
+#### 공급 전력 기반 기계 가용 최대 병렬 ($P_{\max}$) 및 오버클록 수용 한계
 장착된 에너지 해치 티어 전압 $V_{\text{hatch}}$, 암페어 $A_{\text{hatch}}$, 단일 레시피 소비 전력 $E_{\text{recipe}}$일 때:
 $$P_{\max} = \min\left(\text{ConfiguredParallel}, \, \left\lfloor \frac{V_{\text{hatch}} \times A_{\text{hatch}}}{E_{\text{recipe}}} \right\rfloor\right)$$
 $\text{ConfiguredParallel} > P_{\max}$일 경우 캔버스 카드에 하드웨어 용량 초과 경고 뱃지를 렌더링합니다.
+
+멀티블록 기계의 오버클록 상한 티어($\Delta\text{Tier}_{\max}$)는 장착된 에너지 해치의 총 전력 공급 용량($V_{\max} = V_{\text{hatch}} \times A_{\text{hatch}}$)을 지원하는 최대 전압 티어($\text{capacityTier} = \text{getMaxTierProvided}(V_{\max})$)까지 허용되어 인게임 실제 가동 속도와 동일하게 연쇄 오버클록이 수행됩니다:
+$$\Delta\text{Tier}_{\max} = \max\Big(\text{node.getTierDelta()}, \, \max\big(0, \, \text{capacityTier.ordinal()} - \text{recipeTier.ordinal()}\big)\Big)$$
+
 단, 암석 여과기(Rock Filtrator) 등 구조상 단일 에너지 해치만 허용되는 구조체($\text{energyHatchSlotCount} = 1$)는 최대 1개의 해치만 장착 가능하며 듀얼 해치 전압 티어 스킵 오버클럭이 적용되지 않습니다.
 
 ---
 
-### 1.5 확률 부산물 전압 티어 부스트 (Tier Chance Boost)
+### 1.5 확률 부산물 전압 티어 부스트 및 분쇄기 티어 게이팅 (Tier Chance Boost & Gating)
 
 원심분리기, 분쇄기 등 확률적 부산물을 생성하는 레시피에서 전압 티어가 상승할 때마다 획득 확률을 보정합니다:
 
 $$\text{Effective Chance} = \min\Big(1.0, \, \text{BaseChance} + (\Delta\text{Tier} \times \text{TierChanceBoost})\Big)$$
 $$\text{Single Machine Expected Output Rate (per sec)} = \text{Amount} \times \text{Effective Chance} \times \text{CPS}$$
 
+* **전기 분쇄기 저티어 부산물 락킹**:
+  광석 분쇄(`gtceu:ore_crushing`) 및 분쇄기 재활용(`gtceu:macerator_recycling`)을 포함한 분쇄기 노드가 HV($512\text{ EU/t}$) 미만 티어로 가동될 경우, 인게임 그렉텍 사양에 따라 확률 부산물의 산출 확률이 엄격히 $0\%$로 잠깁니다 ($\text{Effective Chance} = 0$).
+
 ---
 
-### 1.6 증기 보일러 물리 및 TFG 대형 보일러 비선형 모델 (ADR-057)
+### 1.6 벌크 처리(Bulking) 및 배치 모드 병렬 분리 불변식
+
+Star Technology 벌크 처리(Bulking) 모드($4:3.25 \sim 64:52$) 및 고속 배치 모드(Batch Mode)는 전력을 추가 소비하지 않는 비전력성 병렬 승수(Power-Constant)로 분류됩니다:
+1. **전력 소비 유효 병렬 ($P_{\text{power}}$)**: 코일/기계 물리 병렬 및 순수 전력 증강 승수만을 반영하며, 에너지 해치 용량 상한($P_{\max}$) 내로 엄격히 클램핑됩니다.
+2. **실질 생산 유효 병렬 ($P_{\text{eff}}$)**: $P_{\text{power}}$에 처리량 증강, 벌킹 배율 및 배치 모드 배율을 순차 곱연산하여 초당 생산량을 정확히 연역합니다.
+
+---
+
+### 1.7 증기 보일러 물리 및 TFG 대형 보일러 비선형 모델 (ADR-057)
 
 #### 1. 표준 GTCEu 증기 보일러 및 쓰로틀 ($\theta \in [0.25, 1.0]$)
 - **소형 보일러 (Small Boilers)**: LP Bronze ($120\text{ L/s} = 6\text{ mB/t}$), HP Steel ($360\text{ L/s} = 18\text{ mB/t}$)

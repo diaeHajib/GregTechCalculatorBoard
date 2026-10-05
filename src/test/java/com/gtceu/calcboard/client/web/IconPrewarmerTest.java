@@ -23,6 +23,7 @@ class IconPrewarmerTest {
 
     @BeforeEach
     void setUp() throws IOException {
+        IconPrewarmer.setForceEnabledForTesting(true);
         prewarmer = IconPrewarmer.getInstance();
         prewarmer.clear();
         cache = IconDiskCache.getInstance();
@@ -33,6 +34,7 @@ class IconPrewarmerTest {
 
     @AfterEach
     void tearDown() throws IOException {
+        IconPrewarmer.setForceEnabledForTesting(false);
         prewarmer.clear();
         cache.clear();
         if (tempDir != null && Files.exists(tempDir)) {

@@ -166,9 +166,7 @@ public final class GTPowerCalculator {
         double combinedEutMult = node.getCombinedEutMultiplier();
         double threadingPowerMult = node.hasThreading() ? RecipeNodeThreadingHelper.getThreadingConfig(node).getFinalPowerMultiplier() : 1.0;
         long maxCapacity = GTAddonCompatibilityHandler.getMaxEUtCapacity(node);
-        if (GTAddonCompatibilityHandler.hasEnergyHatch(node)) {
-            maxCapacity = Math.min(maxCapacity, GTAddonCompatibilityHandler.getOverclockVoltage(node));
-        }
+        long maxVoltage = GTAddonCompatibilityHandler.getOverclockVoltage(node);
 
         double baseDuration = node.getBaseDurationTicks();
         double currentEUt = node.getBaseEUt();
@@ -189,6 +187,9 @@ public final class GTPowerCalculator {
 
         for (int i = 0; i < maxTierDelta; i++) {
             double nextEUt = currentEUt * energyFactor;
+            if (nextEUt > maxVoltage) {
+                break;
+            }
             double nextTotalEUt = nextEUt * effectivePar * subtickParallel * combinedEutMult * threadingPowerMult;
             if (nextTotalEUt > maxCapacity) {
                 break;
@@ -227,14 +228,11 @@ public final class GTPowerCalculator {
             return node.getTierDelta() + GTFusionHelper.getReflectorOverclockDelta(node);
         }
         int maxTierDelta = node.getTierDelta();
-        long maxCapacity = GTAddonCompatibilityHandler.getMaxEUtCapacity(node);
-        if (GTAddonCompatibilityHandler.hasEnergyHatch(node)) {
-            maxCapacity = Math.min(maxCapacity, GTAddonCompatibilityHandler.getOverclockVoltage(node));
-        }
-        if (maxCapacity >= Long.MAX_VALUE || node.getRecipeTier() == null) {
+        long maxVoltage = GTAddonCompatibilityHandler.getOverclockVoltage(node);
+        if (maxVoltage >= Long.MAX_VALUE || node.getRecipeTier() == null) {
             return maxTierDelta;
         }
-        GTVoltageTier capacityTier = GTVoltageTier.getMaxTierProvided(maxCapacity);
+        GTVoltageTier capacityTier = GTVoltageTier.getMaxTierProvided(maxVoltage);
         int capacityDelta = capacityTier.ordinal() - node.getRecipeTier().ordinal();
         if (node.getRecipeTier() == GTVoltageTier.ULV) {
             capacityDelta--;
@@ -242,17 +240,105 @@ public final class GTPowerCalculator {
         return Math.max(maxTierDelta, Math.max(0, capacityDelta));
     }
 
-    private static double calculateFinalDuration(RecipeNode node, OverclockMode.OverclockResult baseRes, boolean isGenerator) {
-        double duration;
-        if (isGenerator && GTTurbineHelper.isLargeTurbine(node)) {
-            duration = calculateLargeTurbineDuration(node, baseRes);
-        } else {
-            duration = Math.max(1.0, Math.floor(baseRes.durationTicks() * node.getCombinedDurationMultiplier() + 1e-9));
+    public static boolean isSequentialPostOcAddon(MachineAddon addon) {
+        if (addon == null || addon.getId() == null) return false;
+        String id = addon.getId();
+        return "gtceu:throughput_boosting".equals(id)
+                || id.startsWith("gtceu:bulk_processing")
+                || "gtceu:batch_processing".equals(id)
+                || "gtceu:batch_mode".equals(id);
+    }
+
+    public static boolean hasThroughputBoosting(RecipeNode node) {
+        if (node == null) return false;
+        for (MachineAddon a : node.getAddons()) {
+            if ("gtceu:throughput_boosting".equals(a.getId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static double getBulkingDurationMultiplier(RecipeNode node) {
+        if (node == null) return 0.0;
+        for (MachineAddon a : node.getAddons()) {
+            if (a.getId() != null && a.getId().startsWith("gtceu:bulk_processing")) {
+                return a.getDurationMultiplier();
+            }
+        }
+        return 0.0;
+    }
+
+    public static boolean hasBatchModeAddon(RecipeNode node) {
+        if (node == null) return false;
+        for (MachineAddon a : node.getAddons()) {
+            if ("gtceu:batch_processing".equals(a.getId()) || "gtceu:batch_mode".equals(a.getId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static double getNonSequentialDurationMultiplier(RecipeNode node) {
+        if (node == null) return 1.0;
+        double mult = 1.0;
+        for (MachineAddon a : node.getAddons()) {
+            if (!isSequentialPostOcAddon(a)) {
+                mult *= a.getDurationMultiplier();
+            }
+        }
+        return mult;
+    }
+
+    public static int computeBatchMultiplierFromDuration(double dur) {
+        if (dur <= 0.0 || dur >= 100.0) {
+            return 1;
+        }
+        return Math.max(1, (int) Math.floor(100.0 / dur));
+    }
+
+    public static double calculatePreBatchDuration(RecipeNode node, OverclockMode.OverclockResult baseRes) {
+        if (node == null || baseRes == null) return 1.0;
+        double nonSeqMult = getNonSequentialDurationMultiplier(node);
+        double dur = Math.max(1.0, Math.floor(baseRes.durationTicks() * nonSeqMult + 1e-9));
+
+        if (hasThroughputBoosting(node)) {
+            dur = Math.max(1.0, Math.floor(dur * 1.6 + 1e-9));
+        }
+        double bulkMult = getBulkingDurationMultiplier(node);
+        if (bulkMult > 0.0) {
+            dur = Math.max(1.0, Math.floor(dur * bulkMult + 1e-9));
         }
         if (node.hasThreading()) {
-            duration = Math.max(1.0, duration * RecipeNodeThreadingHelper.getThreadingConfig(node).getFinalDurationMultiplier());
+            dur = Math.max(1.0, dur * RecipeNodeThreadingHelper.getThreadingConfig(node).getFinalDurationMultiplier());
         }
-        return duration;
+        return dur;
+    }
+
+    public static double calculatePreBatchDuration(RecipeNode node) {
+        if (node == null) return 1.0;
+        OverclockMode.OverclockResult baseRes = calculateElectricOverclock(node);
+        return calculatePreBatchDuration(node, baseRes);
+    }
+
+    public static int computeBatchMultiplier(RecipeNode node) {
+        if (!hasBatchModeAddon(node)) {
+            return 1;
+        }
+        OverclockMode.OverclockResult baseRes = calculateElectricOverclock(node);
+        double preBatchDur = calculatePreBatchDuration(node, baseRes);
+        return computeBatchMultiplierFromDuration(preBatchDur);
+    }
+
+    private static double calculateFinalDuration(RecipeNode node, OverclockMode.OverclockResult baseRes, boolean isGenerator) {
+        if (isGenerator && GTTurbineHelper.isLargeTurbine(node)) {
+            return calculateLargeTurbineDuration(node, baseRes);
+        }
+        double dur = calculatePreBatchDuration(node, baseRes);
+        if (hasBatchModeAddon(node)) {
+            dur *= computeBatchMultiplierFromDuration(dur);
+        }
+        return Math.max(1.0, dur);
     }
 
     private static double calculateFinalEut(RecipeNode node, OverclockMode.OverclockResult baseRes, boolean isGenerator) {
@@ -302,28 +388,45 @@ public final class GTPowerCalculator {
                 par = Math.max(1, node.getParallel() * node.getCombinedParallelMultiplier());
             }
         } else {
-            int base = node.isMultiblock() ? getDefaultParallel(node) : 1;
-            int effectiveBase = Math.max(base, node.getParallel() > 1 ? node.getParallel() : 1);
-            if (isCoilParallelNode(node)) {
-                int coilPar = 0;
-                for (MachineAddon addon : node.getAddons()) {
-                    coilPar = Math.max(coilPar, extractCoilSmelterParallel(addon));
-                }
-                int nonCoilParallelMultiplier = 1;
-                for (MachineAddon a : node.getAddons()) {
-                    if (a.getCategory() != MachineAddon.Category.COIL) {
-                        nonCoilParallelMultiplier *= a.getParallelMultiplier();
-                    }
-                }
-                int baseSmelterPar = coilPar > 0 ? coilPar : effectiveBase;
-                par = Math.max(1, baseSmelterPar * nonCoilParallelMultiplier);
-            } else {
-                int powerConsumingMult = NodeAddonHelper.getPowerConsumingParallelMultiplier(node.getAddons());
-                int powerConstantMult = NodeAddonHelper.getPowerConstantParallelMultiplier(node.getAddons());
-                int powerConsumingPar = Math.max(1, effectiveBase * powerConsumingMult);
-                powerConsumingPar = calculateEnergyParallelCap(node, powerConsumingPar);
-                par = Math.max(1, powerConsumingPar * powerConstantMult);
+            int powerConstantMult = NodeAddonHelper.getPowerConstantParallelMultiplier(node.getAddons());
+            int powerConsumingPar = computePowerConsumingParallel(node);
+            par = Math.max(1, powerConsumingPar * powerConstantMult);
+            if (hasBatchModeAddon(node)) {
+                par *= computeBatchMultiplier(node);
             }
+        }
+        return par;
+    }
+
+    /**
+     * Computes the effective electrical parallel capacity that actively consumes power.
+     * Excludes power-constant traits such as throughput boosting, bulking, and batch mode.
+     *
+     * @param node the recipe node to evaluate
+     * @return the power-consuming parallel count, capped by energy hatch capacity
+     */
+    public static int computePowerConsumingParallel(RecipeNode node) {
+        if (node == null) return 1;
+        int par;
+        int base = node.isMultiblock() ? getDefaultParallel(node) : 1;
+        int effectiveBase = Math.max(base, node.getParallel() > 1 ? node.getParallel() : 1);
+        if (isCoilParallelNode(node)) {
+            int coilPar = 0;
+            for (MachineAddon addon : node.getAddons()) {
+                coilPar = Math.max(coilPar, extractCoilSmelterParallel(addon));
+            }
+            int nonCoilPowerConsumingMult = 1;
+            for (MachineAddon a : node.getAddons()) {
+                if (a.getCategory() != MachineAddon.Category.COIL && !a.isPowerConstant()) {
+                    nonCoilPowerConsumingMult *= a.getParallelMultiplier();
+                }
+            }
+            int baseSmelterPar = coilPar > 0 ? coilPar : effectiveBase;
+            par = Math.max(1, baseSmelterPar * nonCoilPowerConsumingMult);
+        } else {
+            int powerConsumingMult = NodeAddonHelper.getPowerConsumingParallelMultiplier(node.getAddons());
+            int powerConsumingPar = Math.max(1, effectiveBase * powerConsumingMult);
+            par = calculateEnergyParallelCap(node, powerConsumingPar);
         }
         if (node.hasThreading()) {
             par *= RecipeNodeThreadingHelper.getThreadingConfig(node).getEffectiveParallels();
@@ -372,7 +475,7 @@ public final class GTPowerCalculator {
 
     /**
      * Computes the effective parallel factor used strictly for power and overclocking calculations,
-     * factoring out constant-power parallel multipliers (e.g. Throughput Boosting).
+     * factoring out constant-power parallel multipliers (e.g. Throughput Boosting) and batch processing.
      *
      * @param node the recipe node to evaluate
      * @return the power-effective parallel count (minimum 1)
@@ -382,9 +485,7 @@ public final class GTPowerCalculator {
         if (node.isGenerator()) {
             return computeEffectiveParallel(node);
         }
-        int totalPar = computeEffectiveParallel(node);
-        int powerConstantMult = NodeAddonHelper.getPowerConstantParallelMultiplier(node.getAddons());
-        return Math.max(1, totalPar / powerConstantMult);
+        return computePowerConsumingParallel(node);
     }
 
     public static boolean isCoilParallelNode(RecipeNode node) {
@@ -480,7 +581,7 @@ public final class GTPowerCalculator {
         int maxPar = Math.min(hatchAndHardware, energyLimit);
         int baseLimit = Math.max(1, maxPar == Integer.MAX_VALUE ? node.getParallel() : maxPar);
         int powerConstantMult = NodeAddonHelper.getPowerConstantParallelMultiplier(node.getAddons());
-        return baseLimit * powerConstantMult;
+        return baseLimit * powerConstantMult * computeBatchMultiplier(node);
     }
 
     public static int getHatchAndHardwareParallelLimit(RecipeNode node) {
@@ -519,14 +620,74 @@ public final class GTPowerCalculator {
         return false;
     }
 
-    private static final java.util.Set<ResourceLocation> MACERATOR_CATEGORIES = java.util.Set.of(
+    public static final java.util.Set<ResourceLocation> MACERATOR_CATEGORIES = java.util.Set.of(
             ResourceLocation.tryParse("gtceu:macerator"),
-            ResourceLocation.tryParse("gtceu:macerator_recipes")
+            ResourceLocation.tryParse("gtceu:macerator_recipes"),
+            ResourceLocation.tryParse("gtceu:ore_crushing"),
+            ResourceLocation.tryParse("gtceu:macerator_recycling")
     );
 
-    private static boolean isMaceratorCategory(ResourceLocation catId) {
+    private static final java.util.Set<ResourceLocation> MACERATOR_MACHINES;
+
+    static {
+        java.util.Set<ResourceLocation> machines = new java.util.HashSet<>();
+        machines.add(ResourceLocation.tryParse("gtceu:lp_steam_macerator"));
+        machines.add(ResourceLocation.tryParse("gtceu:hp_steam_macerator"));
+        machines.add(ResourceLocation.tryParse("gtceu:large_macerator"));
+        for (GTVoltageTier tier : GTVoltageTier.values()) {
+            machines.add(ResourceLocation.tryParse("gtceu:" + tier.getName().toLowerCase(java.util.Locale.ROOT) + "_macerator"));
+        }
+        MACERATOR_MACHINES = java.util.Collections.unmodifiableSet(machines);
+    }
+
+    /**
+     * Checks if the given recipe category identifier corresponds to a macerator processing line.
+     *
+     * @param catId the recipe category identifier
+     * @return true if the category is a recognized macerator category
+     */
+    public static boolean isMaceratorCategory(ResourceLocation catId) {
         if (catId == null) return false;
-        return MACERATOR_CATEGORIES.contains(catId) || catId.getPath().equals("macerator");
+        if (MACERATOR_CATEGORIES.contains(catId)) return true;
+        if ("gtceu".equals(catId.getNamespace())) {
+            String path = catId.getPath();
+            return "macerator".equals(path) || "ore_crushing".equals(path) || "macerator_recycling".equals(path);
+        }
+        return false;
+    }
+
+    /**
+     * Checks if the given item or machine identifier is a recognized macerator machine.
+     *
+     * @param id the resource location of the machine
+     * @return true if the machine is a macerator
+     */
+    public static boolean isMaceratorMachine(ResourceLocation id) {
+        if (id == null) return false;
+        return MACERATOR_MACHINES.contains(id);
+    }
+
+    /**
+     * Determines whether the specified recipe node operates as a macerator,
+     * inspecting recipe category, machine icon, and available workstations.
+     *
+     * @param node the recipe node to inspect
+     * @return true if the node is classified as a macerator
+     */
+    public static boolean isMaceratorNode(RecipeNode node) {
+        if (node == null) return false;
+        if (isMaceratorCategory(node.getRecipeCategoryId())) {
+            return true;
+        }
+        if (node.getMachineIcon() != null && isMaceratorMachine(node.getMachineIcon())) {
+            return true;
+        }
+        for (ResourceLocation ws : node.getAvailableWorkstations()) {
+            if (isMaceratorMachine(ws)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static double computeEffectiveOutputChance(RecipeNode node, int outputIndex, double defaultChance) {
@@ -544,7 +705,7 @@ public final class GTPowerCalculator {
             return 0.0;
         }
 
-        if (isMaceratorCategory(node.getRecipeCategoryId())) {
+        if (isMaceratorNode(node)) {
             GTVoltageTier curTier = node.getTargetTier();
             if (curTier == null) curTier = GTVoltageTier.LV;
             int curTierIdx = curTier.ordinal();

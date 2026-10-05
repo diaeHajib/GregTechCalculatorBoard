@@ -57,10 +57,12 @@ public class PageTabBarWidget {
         int browserBtnW = 22;
         int tabY = screen.getPageTabY();
 
-        BoardPage activePage = BoardManager.getInstance().getActivePage();
-        if (!isTeam && activePage != null && activePage.isModuleSubPage()) {
-            if (activePage.getParentPageId().isEmpty() || BoardManager.getInstance().getPage(activePage.getParentPageId()).isEmpty()) {
-                BoardManager.getInstance().cleanupOrphanSubpages();
+        BoardPage activePage = isTeam
+                ? teamState.getTeamPageAsBoardPage(teamState.getActiveTeamPageId())
+                : BoardManager.getInstance().getActivePage();
+        if (activePage != null && activePage.isModuleSubPage()) {
+            if (activePage.getParentPageId().isEmpty() || ClientWorkspaceState.resolveActiveWorkspacePage(activePage.getParentPageId()) == null) {
+                if (!isTeam) BoardManager.getInstance().cleanupOrphanSubpages();
                 screen.rebuildBoardWidgets();
                 return;
             }
@@ -205,10 +207,12 @@ public class PageTabBarWidget {
         boolean isTeam = teamState.isTeamMode();
         int browserBtnW = 22;
 
-        BoardPage activePage = BoardManager.getInstance().getActivePage();
-        if (!isTeam && activePage != null && activePage.isModuleSubPage()) {
-            if (activePage.getParentPageId().isEmpty() || BoardManager.getInstance().getPage(activePage.getParentPageId()).isEmpty()) {
-                BoardManager.getInstance().cleanupOrphanSubpages();
+        BoardPage activePage = isTeam
+                ? teamState.getTeamPageAsBoardPage(teamState.getActiveTeamPageId())
+                : BoardManager.getInstance().getActivePage();
+        if (activePage != null && activePage.isModuleSubPage()) {
+            if (activePage.getParentPageId().isEmpty() || ClientWorkspaceState.resolveActiveWorkspacePage(activePage.getParentPageId()) == null) {
+                if (!isTeam) BoardManager.getInstance().cleanupOrphanSubpages();
                 screen.rebuildBoardWidgets();
                 return true;
             }
@@ -783,7 +787,8 @@ public class PageTabBarWidget {
         curX += backW + 8;
         String parentName = "";
         if (!activePage.getParentPageId().isEmpty()) {
-            parentName = BoardManager.getInstance().getPage(activePage.getParentPageId()).map(BoardPage::getName).orElse("");
+            BoardPage parent = ClientWorkspaceState.resolveActiveWorkspacePage(activePage.getParentPageId());
+            parentName = parent != null ? parent.getName() : "";
         }
         if (parentName.isEmpty()) parentName = "Main";
         String parentText = parentName + "  >  ";
@@ -821,7 +826,8 @@ public class PageTabBarWidget {
         curX += backW + 8;
         String parentName = "";
         if (!activePage.getParentPageId().isEmpty()) {
-            parentName = BoardManager.getInstance().getPage(activePage.getParentPageId()).map(BoardPage::getName).orElse("");
+            BoardPage parent = ClientWorkspaceState.resolveActiveWorkspacePage(activePage.getParentPageId());
+            parentName = parent != null ? parent.getName() : "";
         }
         if (parentName.isEmpty()) parentName = "Main";
         String parentText = parentName + "  >  ";

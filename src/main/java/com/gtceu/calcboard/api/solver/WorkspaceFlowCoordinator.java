@@ -204,16 +204,37 @@ public final class WorkspaceFlowCoordinator {
         lastPageMap = Collections.unmodifiableMap(pageMap);
 
         Set<String> brokenLinkNodeIds = new HashSet<>();
-        List<InterPageLink> links = collectInterPageLinks(pageMap, brokenLinkNodeIds);
+        Set<String> brokenLinkPageIds = new HashSet<>();
+        List<InterPageLink> links = collectInterPageLinks(pageMap, brokenLinkNodeIds, brokenLinkPageIds);
         lastLinks = Collections.unmodifiableList(links);
 
-        Map<String, Set<String>> adjacency = buildAdjacencyMap(pageMap.keySet(), links);
+        if (links.isEmpty() && brokenLinkNodeIds.isEmpty()) {
+            if (!lastResult.allocatedRates().isEmpty() || !lastResult.demandRates().isEmpty()) {
+                for (BoardPage page : pageMap.values()) {
+                    resetPageRerouteRates(page);
+                }
+            }
+            lastResult = WorkspaceFlowResult.EMPTY;
+            return lastResult;
+        }
+
+        Set<String> involvedPages = new LinkedHashSet<>();
+        for (InterPageLink link : links) {
+            involvedPages.add(link.sourcePageId());
+            involvedPages.add(link.targetPageId());
+        }
+        involvedPages.addAll(brokenLinkPageIds);
+
+        Map<String, Set<String>> adjacency = buildAdjacencyMap(involvedPages, links);
         CycleDetectionResult cycleResult = detectCyclesTarjan(adjacency, links);
 
-        List<String> topologicalOrder = computeTopologicalOrder(pageMap.keySet(), adjacency, cycleResult.circularPageIds());
+        List<String> topologicalOrder = computeTopologicalOrder(involvedPages, adjacency, cycleResult.circularPageIds());
 
-        for (BoardPage page : pageMap.values()) {
-            resetPageRerouteRates(page);
+        for (String pid : involvedPages) {
+            BoardPage page = pageMap.get(pid);
+            if (page != null) {
+                resetPageRerouteRates(page);
+            }
         }
 
         Map<String, Double> allocatedRates = new LinkedHashMap<>();
@@ -253,10 +274,14 @@ public final class WorkspaceFlowCoordinator {
         return result;
     }
 
-    private static List<InterPageLink> collectInterPageLinks(Map<String, BoardPage> pageMap, Set<String> brokenLinkNodeIds) {
+    private static List<InterPageLink> collectInterPageLinks(
+            Map<String, BoardPage> pageMap,
+            Set<String> brokenLinkNodeIds,
+            Set<String> brokenLinkPageIds
+    ) {
         List<InterPageLink> links = new ArrayList<>();
         for (BoardPage page : pageMap.values()) {
-            collectPageInterLinks(page, pageMap, brokenLinkNodeIds, links);
+            collectPageInterLinks(page, pageMap, brokenLinkNodeIds, brokenLinkPageIds, links);
         }
         return links;
     }
@@ -265,13 +290,14 @@ public final class WorkspaceFlowCoordinator {
             BoardPage page,
             Map<String, BoardPage> pageMap,
             Set<String> brokenLinkNodeIds,
+            Set<String> brokenLinkPageIds,
             List<InterPageLink> links
     ) {
         if (page.getGraph() == null) return;
         for (RecipeNode node : page.getGraph().getNodes()) {
             if (!node.isReroute()) continue;
-            collectExplicitExportLinks(page, node, pageMap, brokenLinkNodeIds, links);
-            collectImplicitLinkedSourceLinks(page, node, pageMap, brokenLinkNodeIds, links);
+            collectExplicitExportLinks(page, node, pageMap, brokenLinkNodeIds, brokenLinkPageIds, links);
+            collectImplicitLinkedSourceLinks(page, node, pageMap, brokenLinkNodeIds, brokenLinkPageIds, links);
         }
     }
 
@@ -280,12 +306,14 @@ public final class WorkspaceFlowCoordinator {
             RecipeNode node,
             Map<String, BoardPage> pageMap,
             Set<String> brokenLinkNodeIds,
+            Set<String> brokenLinkPageIds,
             List<InterPageLink> links
     ) {
         for (CrossPageExportTarget target : node.getExportTargets()) {
             BoardPage targetPage = pageMap.get(target.targetPageId());
             if (targetPage == null) {
                 brokenLinkNodeIds.add(node.getId());
+                brokenLinkPageIds.add(page.getId());
                 continue;
             }
             RecipeNode consumer = findConsumerNode(targetPage, page.getId(), node.getId());
@@ -303,6 +331,7 @@ public final class WorkspaceFlowCoordinator {
             RecipeNode node,
             Map<String, BoardPage> pageMap,
             Set<String> brokenLinkNodeIds,
+            Set<String> brokenLinkPageIds,
             List<InterPageLink> links
     ) {
         if (!node.isLinkedJunction()) return;
@@ -313,11 +342,13 @@ public final class WorkspaceFlowCoordinator {
         BoardPage srcPage = pageMap.get(srcPageId);
         if (srcPage == null) {
             brokenLinkNodeIds.add(node.getId());
+            brokenLinkPageIds.add(page.getId());
             return;
         }
         RecipeNode srcNode = srcPage.getGraph().findNodeById(srcNodeId);
         if (srcNode == null || !srcNode.isReroute()) {
             brokenLinkNodeIds.add(node.getId());
+            brokenLinkPageIds.add(page.getId());
             return;
         }
         boolean hasExplicitExport = srcNode.getExportTargets().stream()
@@ -498,13 +529,21 @@ public final class WorkspaceFlowCoordinator {
             Map<String, Double> demandRates,
             Set<String> starvedNodeIds
     ) {
+        Set<String> involvedPages = new LinkedHashSet<>();
+        for (InterPageLink link : links) {
+            involvedPages.add(link.sourcePageId());
+            involvedPages.add(link.targetPageId());
+        }
+
         for (String pageId : topologicalOrder) {
             BoardPage page = pageMap.get(pageId);
             if (page == null || page.getGraph() == null) continue;
             propagatePageFlows(page, pageMap, links, circularPages, brokenLinkNodeIds, allocatedRates, demandRates, starvedNodeIds);
         }
-        for (BoardPage page : pageMap.values()) {
-            if (page.getGraph() != null) {
+
+        for (String pageId : involvedPages) {
+            BoardPage page = pageMap.get(pageId);
+            if (page != null && page.getGraph() != null) {
                 page.getGraph().setCachedSummary(FlowGraphSolver.computeSummary(page.getGraph()));
             }
         }

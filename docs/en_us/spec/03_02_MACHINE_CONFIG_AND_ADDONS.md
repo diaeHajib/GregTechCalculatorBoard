@@ -139,6 +139,15 @@ flowchart TB
   </div>
 </div>
 
+### 2.1 Star Technology 5-Tier Bulk Processing Modes
+Compatible Star Technology multiblocks (such as Ultra Barrel) support 5 discrete bulking ratios:
+- **`4:3.25`**: 4x input batching, 3.25x duration multiplier
+- **`8:6.5`**: 8x input batching, 6.5x duration multiplier
+- **`16:13`**: 16x input batching, 13x duration multiplier (Standard Bulk Mode)
+- **`32:26`**: 32x input batching, 26x duration multiplier
+- **`64:52`**: 64x input batching, 52x duration multiplier
+Modes are mutually exclusive and match in-game machine settings to simulate exact throughput per second.
+
 ---
 
 ## 3. In-Place Alternative Recipe Switching (`AlternativeRecipeFinder`)

@@ -25,12 +25,45 @@ public final class StarTReflectionBridge {
 
         collectModifiers(startTModifiersCls, modNames);
         START_RECIPE_MODIFIER_NAMES = Collections.unmodifiableMap(modNames);
+        I_BULKING_CLASS = loadClassQuietly("com.startechnology.start_core.machine.bulking.IBulking");
     }
+
+    private static final Class<?> I_BULKING_CLASS;
 
     private StarTReflectionBridge() {}
 
     public static boolean isStarTLoaded() {
         return STAR_T_LOADED;
+    }
+
+    /**
+     * Checks if the given machine class implements Star Technology's bulking interface
+     * or extends a recognized bulking multiblock class.
+     *
+     * @param cls the machine class to inspect
+     * @return true if the class supports bulking modes
+     */
+    public static boolean isBulkingMachineClass(Class<?> cls) {
+        if (cls == null) return false;
+        if (I_BULKING_CLASS != null && I_BULKING_CLASS.isAssignableFrom(cls)) {
+            return true;
+        }
+        Class<?> current = cls;
+        while (current != null && current != Object.class) {
+            String name = current.getName();
+            if ("com.startechnology.start_core.machine.bulking.BulkingMachine".equals(name)
+                    || "com.startechnology.start_core.machine.bulking.BulkingCoiledMachine".equals(name)
+                    || "com.startechnology.start_core.machine.bulking.BulkingThreadedMachine".equals(name)) {
+                return true;
+            }
+            for (Class<?> iface : current.getInterfaces()) {
+                if ("com.startechnology.start_core.machine.bulking.IBulking".equals(iface.getName())) {
+                    return true;
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return false;
     }
 
     public static String getRecipeModifierName(Object modifier) {

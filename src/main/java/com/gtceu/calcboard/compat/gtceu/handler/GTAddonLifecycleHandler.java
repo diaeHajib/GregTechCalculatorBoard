@@ -100,7 +100,11 @@ public final class GTAddonLifecycleHandler {
             return;
         }
         if (addon.getCategory() == MachineAddon.Category.MULTIBLOCK_TRAIT) {
-            node.getAddons().removeIf(a -> a.getId().equals(addon.getId()));
+            if (GTAddonCompatibilityHandler.isBulkProcessingAddon(addon)) {
+                node.getAddons().removeIf(GTAddonCompatibilityHandler::isBulkProcessingAddon);
+            } else {
+                node.getAddons().removeIf(a -> a.getId().equals(addon.getId()));
+            }
             node.getAddons().add(addon);
             return;
         }

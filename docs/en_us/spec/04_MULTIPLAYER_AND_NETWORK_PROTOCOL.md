@@ -53,8 +53,8 @@ sequenceDiagram
 ## 2. 2-Tier On-Demand Paging & 512KB Chunked Streaming
 
 ### 2.1 2-Tier On-Demand Paging
-- **Tier 1 (Metadata Synchronization)**: On board open, sends only page IDs, titles, authors, and revisions via `S2CSyncWorkspaceMetaPacket` instead of full heavy graph NBTs.
-- **Tier 2 (On-Demand Page Load)**: When a player clicks to open a specific tab, `C2SRequestPageDataPacket` fetches that page's detailed `FlowGraph` lazily.
+- **Tier 1 (Metadata Synchronization)**: On board open, sends lightweight page metadata (page IDs, titles, folder paths, page type `PageType.MODULE`, parent IDs, authors, and revisions) via `S2CSyncWorkspaceMetaPacket` instead of heavy graph NBTs.
+- **Tier 2 (On-Demand Page Load)**: When a player clicks to open a specific tab or double-clicks a module card, `C2SRequestPageDataPacket` fetches that page's detailed `FlowGraph` lazily.
 
 ### 2.2 512KB Chunked Streaming (`S2CChunkedDataPacket`)
 - For massive board pages exceeding $512\text{KB}$ after NBT compression, data is automatically split and streamed sequentially.

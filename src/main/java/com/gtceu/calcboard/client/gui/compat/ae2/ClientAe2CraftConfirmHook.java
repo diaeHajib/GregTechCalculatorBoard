@@ -289,7 +289,8 @@ public class ClientAe2CraftConfirmHook {
 
         for (Ae2PlanStep step : eta.steps()) {
             String stepTime = Ae2CraftingPlanEvaluator.formatEtaDuration(step.totalDurationTicks() / 20.0);
-            String boundBadge = !step.boundPageId().isEmpty() ? " §b[⚡ " + step.boundPageName() + "]" : " §8(Standard)";
+            boolean isStepBound = !step.boundPageId().isEmpty() && PatternGraphRegistry.getInstance().isPageBound(step.boundPageId());
+            String boundBadge = isStepBound ? " §b[⚡ " + step.boundPageName() + "]" : " §8(Standard)";
             tooltipLines.add(Component.literal("§7• " + step.stepName() + " x" + step.totalCount() + ": §f" + stepTime + boundBadge));
         }
 
@@ -302,7 +303,8 @@ public class ClientAe2CraftConfirmHook {
     private static int countBoundPages(Ae2PlanEvaluationResult eta) {
         int count = 0;
         for (Ae2PlanStep step : eta.steps()) {
-            if (step.boundPageId() != null && !step.boundPageId().isEmpty()) {
+            if (step.boundPageId() != null && !step.boundPageId().isEmpty()
+                    && PatternGraphRegistry.getInstance().isPageBound(step.boundPageId())) {
                 count++;
             }
         }
@@ -317,7 +319,9 @@ public class ClientAe2CraftConfirmHook {
             displayBName = displayBName.substring(0, displayBName.length() - 3) + "...";
         }
 
-        boolean hasBoundPage = eta.hasBottleneckPage() && BoardManager.getInstance().getPage(eta.bottleneckPageId()).isPresent();
+        boolean hasBoundPage = eta.hasBottleneckPage()
+                && PatternGraphRegistry.getInstance().isPageBound(eta.bottleneckPageId())
+                && BoardManager.getInstance().getPage(eta.bottleneckPageId()).isPresent();
         if (hasBoundPage) {
             String fullStr = "§e↔ " + displayBName + " §a↗";
             int btnW = font.width(fullStr) + 6;

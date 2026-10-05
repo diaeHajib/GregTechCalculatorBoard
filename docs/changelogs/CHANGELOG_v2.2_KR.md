@@ -5,7 +5,8 @@
 </p>
 
 > **버전 바로가기**:
-> - [최신 변경 로그 (v2.3.x)](../../CHANGELOG_KR.md)
+> - [최신 변경 로그 (v2.4.x)](../../CHANGELOG_KR.md)
+> - [v2.3.x 변경 로그](CHANGELOG_v2.3_KR.md)
 > - **v2.2.x 변경 로그 (현재)**
 > - [v2.1.x 변경 로그](CHANGELOG_v2.1_KR.md)
 > - [v2.0.x 변경 로그](CHANGELOG_v2.0_KR.md)

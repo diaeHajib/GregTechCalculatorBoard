@@ -120,22 +120,37 @@ $$\text{Loss}_{\text{sec}} = \text{BaseLossRate} \times \left(\frac{\text{Actual
 $$T_{\text{lifespan}} = \frac{D_{\text{rotor}}}{\text{Loss}_{\text{sec}}} \quad (\text{seconds})$$
 $$\text{Rotor Replacement Rate (Items/hour)} = \frac{3600.0}{T_{\text{lifespan}}} \times \text{MachineCount}$$
 
-#### Power Supply Based Maximum Available Machine Parallel ($P_{\max}$) Formula
+#### Power Supply Based Maximum Available Machine Parallel ($P_{\max}$) & Overclocking Capacity
 Given equipped Energy Hatch voltage $V_{\text{hatch}}$, amperage $A_{\text{hatch}}$, and single recipe power $E_{\text{recipe}}$:
 $$P_{\max} = \min\left(\text{ConfiguredParallel}, \, \left\lfloor \frac{V_{\text{hatch}} \times A_{\text{hatch}}}{E_{\text{recipe}}} \right\rfloor\right)$$
 If $\text{ConfiguredParallel} > P_{\max}$, a hardware capacity warning badge is rendered on the canvas node card.
+
+The multiblock maximum overclock tier limit ($\Delta\text{Tier}_{\max}$) scales with total power capacity ($V_{\max} = V_{\text{hatch}} \times A_{\text{hatch}}$) up to the highest voltage tier provided ($\text{capacityTier} = \text{getMaxTierProvided}(V_{\max})$), matching in-game duration, batching cycles, and throughput:
+$$\Delta\text{Tier}_{\max} = \max\Big(\text{node.getTierDelta()}, \, \max\big(0, \, \text{capacityTier.ordinal()} - \text{recipeTier.ordinal()}\big)\Big)$$
+
 For multiblock structures with single energy hatch limits ($\text{energyHatchSlotCount} = 1$, such as Rock Filtrator), at most one energy hatch may be installed and dual-hatch tier skip overclocking is disallowed.
 
 ---
 
-### 1.5 Byproduct Tier Chance Boost
+### 1.5 Byproduct Tier Chance Boost & Macerator Tier Gating
 
 $$\text{Effective Chance} = \min\Big(1.0, \, \text{BaseChance} + (\Delta\text{Tier} \times \text{TierChanceBoost})\Big)$$
 $$\text{Single Machine Expected Output Rate (per sec)} = \text{Amount} \times \text{Effective Chance} \times \text{CPS}$$
 
+* **Macerator Low-Tier Byproduct Locking**:
+  For macerators operating below HV ($512\text{ EU/t}$) tier (including ore crushing `gtceu:ore_crushing` and recycling `gtceu:macerator_recycling`), byproduct chances and output rates are strictly locked to $0\%$ ($\text{Effective Chance} = 0$).
+
 ---
 
-### 1.6 Steam Boilers & Throttle ($\theta \in [0.25, 1.0]$)
+### 1.6 Bulking & Batch Mode Parallel Separation Invariant
+
+Star Technology Bulking modes ($4:3.25 \sim 64:52$) and Batch Processing modes are classified as power-constant parallel multipliers:
+1. **Power-Consuming Parallel ($P_{\text{power}}$)**: Incorporates physical coils/parallels and power-drawing boosts, strictly capped within energy hatch limits ($P_{\max}$).
+2. **Effective Production Parallel ($P_{\text{eff}}$)**: Extends $P_{\text{power}}$ sequentially by throughput boosts, bulking ratios, and batch multipliers to derive true throughput per second.
+
+---
+
+### 1.7 Steam Boilers & Throttle ($\theta \in [0.25, 1.0]$)
 
 - **Small Boilers**: LP Bronze ($120\text{ L/s} = 6\text{ mB/t}$), HP Steel ($360\text{ L/s} = 18\text{ mB/t}$)
 - **Large Boilers**: Bronze ($16\text{k/s}$), Steel ($36\text{k/s}$), Titanium ($64\text{k/s}$), Tungstensteel ($128\text{k/s}$)
@@ -146,7 +161,7 @@ $$\text{Water Rate (mB/t)} = \frac{\text{Steam Rate (mB/t)}}{160.0} \quad (1\tex
 
 ---
 
-### 1.7 GTCEu & Star Technology Multiblock Trait Physics Formulas (`MULTIBLOCK_TRAIT`)
+### 1.8 GTCEu & Star Technology Multiblock Trait Physics Formulas (`MULTIBLOCK_TRAIT`)
 
 Physics formulas for intrinsic multiblock processing modifiers and traits:
 

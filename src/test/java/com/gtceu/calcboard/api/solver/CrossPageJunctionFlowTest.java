@@ -626,4 +626,51 @@ public class CrossPageJunctionFlowTest {
         Assertions.assertEquals(500.0, metrics.availableSurplus(), 0.001);
         Assertions.assertEquals("Cryo Oxygen Out", junc.getName());
     }
+
+    @Test
+    @DisplayName("Performance: When no inter-page links exist across multiple pages, coordinate returns EMPTY immediately without recomputing summaries")
+    void testEmptyInterPageLinksShortCircuit() {
+        BoardPage p1 = new BoardPage("page_1", "Page 1", new FlowGraph());
+        BoardPage p2 = new BoardPage("page_2", "Page 2", new FlowGraph());
+        BoardPage p3 = new BoardPage("page_3", "Page 3", new FlowGraph());
+
+        RecipeNode m1 = RecipeNode.create(ResourceLocation.tryParse("gtceu:macerator"), "Macerator", 20, 30, GTVoltageTier.LV);
+        m1.setId("m1");
+        p1.getGraph().addNode(m1);
+
+        WorkspaceFlowCoordinator.WorkspaceFlowResult result = WorkspaceFlowCoordinator.coordinate(List.of(p1, p2, p3));
+        Assertions.assertSame(WorkspaceFlowCoordinator.WorkspaceFlowResult.EMPTY, result);
+        Assertions.assertTrue(result.topologicalOrder().isEmpty());
+        Assertions.assertTrue(result.allocatedRates().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Performance: Independent pages without inter-page links are excluded from topological order and flow propagation")
+    void testIndependentPagesExcludedFromCoordination() {
+        BoardPage p1 = new BoardPage("page_source", "Producer Page", new FlowGraph());
+        BoardPage p2 = new BoardPage("page_target", "Consumer Page", new FlowGraph());
+        BoardPage p3 = new BoardPage("page_isolated", "Isolated Page", new FlowGraph());
+
+        RecipeNode sourceJunc = createJunction("src_junc", "Wood Out");
+        sourceJunc.setSupplyMode(SupplyMode.INFINITE);
+        sourceJunc.addExportTarget(new CrossPageExportTarget("page_target", 1, 100.0));
+        p1.getGraph().addNode(sourceJunc);
+
+        RecipeNode consumerJunc = createJunction("dst_junc", "Wood In");
+        consumerJunc.setSupplyMode(SupplyMode.LINKED_JUNCTION);
+        consumerJunc.setLinkedSourcePageId("page_source");
+        consumerJunc.setLinkedSourceNodeId("src_junc");
+        p2.getGraph().addNode(consumerJunc);
+
+        RecipeNode isolatedMachine = RecipeNode.create(ResourceLocation.tryParse("gtceu:furnace"), "Furnace", 20, 30, GTVoltageTier.LV);
+        isolatedMachine.setId("iso_m");
+        p3.getGraph().addNode(isolatedMachine);
+
+        WorkspaceFlowCoordinator.WorkspaceFlowResult result = WorkspaceFlowCoordinator.coordinate(List.of(p1, p2, p3));
+        Assertions.assertEquals(2, result.topologicalOrder().size());
+        Assertions.assertTrue(result.topologicalOrder().contains("page_source"));
+        Assertions.assertTrue(result.topologicalOrder().contains("page_target"));
+        Assertions.assertFalse(result.topologicalOrder().contains("page_isolated"), "Isolated page should be excluded from coordination topological order");
+    }
 }
+

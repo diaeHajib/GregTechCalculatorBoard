@@ -387,4 +387,23 @@ public class Ae2CraftingPlanEvaluatorTest {
         Assertions.assertEquals(20L, res.totalDurationTicks());
         Assertions.assertEquals("~1.0s", res.formattedEta());
     }
+
+    @Test
+    public void testUnboundPageWithMatchingRecipeMustNotBeLinkedToPlan() {
+        BoardPage page7 = BoardManager.getInstance().addPage("Page 7");
+        RecipeNode macerator = RecipeNode.create("Macerator", 200.0, 30.0, GTVoltageTier.LV);
+        macerator.addOutput(IngredientStack.item(ResourceLocation.tryParse("gtceu:crushed_copper_ore"), "Crushed Copper Ore", 1.0, 1.0));
+        page7.getGraph().addNode(macerator);
+
+        PatternId pattern = PatternId.ofKey("gtceu:crushed_copper_ore", "Crushed Copper Ore", ItemStack.EMPTY);
+        Map<PatternId, Long> planCounts = Map.of(pattern, 10L);
+
+        Ae2PlanEvaluationResult res = Ae2CraftingPlanEvaluator.evaluatePatternCounts(planCounts, 0);
+
+        Assertions.assertFalse(res.hasBottleneckPage());
+        Assertions.assertEquals("", res.bottleneckPageId());
+        Assertions.assertFalse(res.steps().isEmpty());
+        Assertions.assertEquals("", res.steps().get(0).boundPageId());
+        Assertions.assertEquals("Standard Crafting", res.steps().get(0).boundPageName());
+    }
 }

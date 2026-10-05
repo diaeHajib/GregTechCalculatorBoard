@@ -5,7 +5,8 @@
 </p>
 
 > **Version Navigation**:
-> - [Latest Changelog (v2.3.x)](../../CHANGELOG.md)
+> - [Latest Changelog (v2.4.x)](../../CHANGELOG.md)
+> - [v2.3.x Changelog](CHANGELOG_v2.3.md)
 > - **v2.2.x Changelog (Current)**
 > - [v2.1.x Changelog](CHANGELOG_v2.1.md)
 > - [v2.0.x Changelog](CHANGELOG_v2.0.md)

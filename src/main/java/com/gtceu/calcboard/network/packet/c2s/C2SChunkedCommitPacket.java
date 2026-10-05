@@ -34,10 +34,14 @@ public class C2SChunkedCommitPacket {
     private final int modifiedNodes;
     private final int deletedNodes;
     private final String folderPath;
+    private final String pageType;
+    private final String parentPageId;
+    private final String parentModuleNodeId;
 
     public C2SChunkedCommitPacket(UUID transferId, UUID teamId, String pageId, String pageTitle, String folderPath, int revision,
                                   String commitMessage, int chunkIndex, int totalChunks, byte[] chunkData,
-                                  int addedNodes, int modifiedNodes, int deletedNodes) {
+                                  int addedNodes, int modifiedNodes, int deletedNodes,
+                                  String pageType, String parentPageId, String parentModuleNodeId) {
         this.transferId = transferId != null ? transferId : UUID.randomUUID();
         this.teamId = teamId != null ? teamId : new UUID(0L, 0L);
         this.pageId = pageId != null ? pageId : "default";
@@ -51,12 +55,21 @@ public class C2SChunkedCommitPacket {
         this.addedNodes = addedNodes;
         this.modifiedNodes = modifiedNodes;
         this.deletedNodes = deletedNodes;
+        this.pageType = pageType != null ? pageType : "STANDARD";
+        this.parentPageId = parentPageId != null ? parentPageId : "";
+        this.parentModuleNodeId = parentModuleNodeId != null ? parentModuleNodeId : "";
+    }
+
+    public C2SChunkedCommitPacket(UUID transferId, UUID teamId, String pageId, String pageTitle, String folderPath, int revision,
+                                  String commitMessage, int chunkIndex, int totalChunks, byte[] chunkData,
+                                  int addedNodes, int modifiedNodes, int deletedNodes) {
+        this(transferId, teamId, pageId, pageTitle, folderPath, revision, commitMessage, chunkIndex, totalChunks, chunkData, addedNodes, modifiedNodes, deletedNodes, "STANDARD", "", "");
     }
 
     public C2SChunkedCommitPacket(UUID transferId, UUID teamId, String pageId, String pageTitle, int revision,
                                   String commitMessage, int chunkIndex, int totalChunks, byte[] chunkData,
                                   int addedNodes, int modifiedNodes, int deletedNodes) {
-        this(transferId, teamId, pageId, pageTitle, "", revision, commitMessage, chunkIndex, totalChunks, chunkData, addedNodes, modifiedNodes, deletedNodes);
+        this(transferId, teamId, pageId, pageTitle, "", revision, commitMessage, chunkIndex, totalChunks, chunkData, addedNodes, modifiedNodes, deletedNodes, "STANDARD", "", "");
     }
 
     public C2SChunkedCommitPacket(FriendlyByteBuf buf) {
@@ -73,6 +86,9 @@ public class C2SChunkedCommitPacket {
         this.modifiedNodes = buf.readVarInt();
         this.deletedNodes = buf.readVarInt();
         this.folderPath = buf.isReadable() ? buf.readUtf(256) : "";
+        this.pageType = buf.isReadable() ? buf.readUtf(64) : "STANDARD";
+        this.parentPageId = buf.isReadable() ? buf.readUtf(256) : "";
+        this.parentModuleNodeId = buf.isReadable() ? buf.readUtf(256) : "";
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -89,6 +105,9 @@ public class C2SChunkedCommitPacket {
         buf.writeVarInt(modifiedNodes);
         buf.writeVarInt(deletedNodes);
         buf.writeUtf(folderPath != null ? folderPath : "");
+        buf.writeUtf(pageType != null ? pageType : "STANDARD");
+        buf.writeUtf(parentPageId != null ? parentPageId : "");
+        buf.writeUtf(parentModuleNodeId != null ? parentModuleNodeId : "");
     }
 
     public UUID getTransferId() {
@@ -200,6 +219,9 @@ public class C2SChunkedCommitPacket {
                     page.setCompressedGraphData(completeNBT);
                 }
             }
+            page.setPageType(com.gtceu.calcboard.api.storage.PageType.fromNameSafe(pageType, com.gtceu.calcboard.api.storage.PageType.STANDARD));
+            page.setParentPageId(parentPageId);
+            page.setParentModuleNodeId(parentModuleNodeId);
             ws.addOrUpdatePage(page);
 
             // 4. Record commit history

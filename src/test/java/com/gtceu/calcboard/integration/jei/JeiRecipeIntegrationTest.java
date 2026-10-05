@@ -510,6 +510,48 @@ public class JeiRecipeIntegrationTest {
     }
 
     @Test
+    public void testOreCrushingByproductTierGating() {
+        RecipeNode node = RecipeNode.create("Ore Crushing (Certus Quartz)", 400.0, 30.0, GTVoltageTier.LV);
+        node.setRecipeCategoryId(ResourceLocation.tryParse("gtceu:ore_crushing"));
+        node.getOutputs().add(IngredientStack.item(ResourceLocation.tryParse("gtceu:crushed_certus_quartz_ore"), "Crushed Certus Quartz", 1, 1.0f));
+        IngredientStack netherQuartz = IngredientStack.item(ResourceLocation.tryParse("minecraft:quartz"), "Nether Quartz", 1, 0.14f);
+        netherQuartz.setTierChanceBoost(0.005);
+        node.getOutputs().add(netherQuartz);
+
+        node.setTargetTier(GTVoltageTier.LV);
+        Assertions.assertEquals(0.0, node.getEffectiveOutputChance(1), 0.001, "At LV, ore crushing byproduct must be 0%");
+        Assertions.assertEquals(0.0, node.getOutputSlotRate(1, false), 0.001, "At LV, byproduct output rate must be 0");
+
+        node.setTargetTier(GTVoltageTier.MV);
+        Assertions.assertEquals(0.0, node.getEffectiveOutputChance(1), 0.001, "At MV, ore crushing byproduct must still be 0%");
+        Assertions.assertEquals(0.0, node.getOutputSlotRate(1, false), 0.001, "At MV, byproduct output rate must be 0");
+
+        node.setTargetTier(GTVoltageTier.HV);
+        Assertions.assertEquals(0.14, node.getEffectiveOutputChance(1), 0.001, "At HV, ore crushing byproduct unlocks at base 14%");
+        Assertions.assertTrue(node.getOutputSlotRate(1, false) > 0.0, "At HV, byproduct rate must be active");
+
+        node.setTargetTier(GTVoltageTier.EV);
+        Assertions.assertEquals(0.145, node.getEffectiveOutputChance(1), 0.001, "At EV, ore crushing byproduct boosted to 14.5%");
+    }
+
+    @Test
+    public void testMaceratorWorkstationFallbackTierGating() {
+        RecipeNode node = RecipeNode.create("Generic Grinding", 400.0, 30.0, GTVoltageTier.LV);
+        node.setRecipeCategoryId(null);
+        node.setMachineIcon(ResourceLocation.tryParse("gtceu:lv_macerator"));
+        node.getOutputs().add(IngredientStack.item(ResourceLocation.tryParse("minecraft:sand"), "Sand", 1, 1.0f));
+        IngredientStack bonus = IngredientStack.item(ResourceLocation.tryParse("minecraft:clay_ball"), "Clay Ball", 1, 0.20f);
+        bonus.setTierChanceBoost(0.02);
+        node.getOutputs().add(bonus);
+
+        node.setTargetTier(GTVoltageTier.LV);
+        Assertions.assertEquals(0.0, node.getEffectiveOutputChance(1), 0.001, "At LV, fallback macerator machine must suppress byproduct");
+
+        node.setTargetTier(GTVoltageTier.HV);
+        Assertions.assertEquals(0.20, node.getEffectiveOutputChance(1), 0.001, "At HV, fallback macerator machine unlocks byproduct");
+    }
+
+    @Test
     public void testJeiMultipleOutputsSameItemDifferentChances() {
         RecipeNode node = RecipeNode.create(ResourceLocation.tryParse("gtceu:autoclave"), "Autoclave", 20, 30, GTVoltageTier.HV);
         ResourceLocation diamondId = ResourceLocation.tryParse("minecraft:diamond");

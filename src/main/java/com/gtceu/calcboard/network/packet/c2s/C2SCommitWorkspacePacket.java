@@ -27,8 +27,11 @@ public class C2SCommitWorkspacePacket {
     private final int addedNodes;
     private final int modifiedNodes;
     private final int deletedNodes;
+    private final String pageType;
+    private final String parentPageId;
+    private final String parentModuleNodeId;
 
-    public C2SCommitWorkspacePacket(UUID teamId, String pageId, String pageTitle, String folderPath, int revision, String commitMessage, byte[] compressedNBT, int addedNodes, int modifiedNodes, int deletedNodes) {
+    public C2SCommitWorkspacePacket(UUID teamId, String pageId, String pageTitle, String folderPath, int revision, String commitMessage, byte[] compressedNBT, int addedNodes, int modifiedNodes, int deletedNodes, String pageType, String parentPageId, String parentModuleNodeId) {
         this.teamId = teamId != null ? teamId : new UUID(0L, 0L);
         this.pageId = pageId != null ? pageId : "default";
         this.pageTitle = pageTitle != null ? pageTitle : "Page";
@@ -39,10 +42,17 @@ public class C2SCommitWorkspacePacket {
         this.addedNodes = addedNodes;
         this.modifiedNodes = modifiedNodes;
         this.deletedNodes = deletedNodes;
+        this.pageType = pageType != null ? pageType : "STANDARD";
+        this.parentPageId = parentPageId != null ? parentPageId : "";
+        this.parentModuleNodeId = parentModuleNodeId != null ? parentModuleNodeId : "";
+    }
+
+    public C2SCommitWorkspacePacket(UUID teamId, String pageId, String pageTitle, String folderPath, int revision, String commitMessage, byte[] compressedNBT, int addedNodes, int modifiedNodes, int deletedNodes) {
+        this(teamId, pageId, pageTitle, folderPath, revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes, "STANDARD", "", "");
     }
 
     public C2SCommitWorkspacePacket(UUID teamId, String pageId, String pageTitle, int revision, String commitMessage, byte[] compressedNBT, int addedNodes, int modifiedNodes, int deletedNodes) {
-        this(teamId, pageId, pageTitle, "", revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes);
+        this(teamId, pageId, pageTitle, "", revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes, "STANDARD", "", "");
     }
 
     public C2SCommitWorkspacePacket(FriendlyByteBuf buf) {
@@ -56,6 +66,9 @@ public class C2SCommitWorkspacePacket {
         this.modifiedNodes = buf.readVarInt();
         this.deletedNodes = buf.readVarInt();
         this.folderPath = buf.isReadable() ? buf.readUtf(256) : "";
+        this.pageType = buf.isReadable() ? buf.readUtf(64) : "STANDARD";
+        this.parentPageId = buf.isReadable() ? buf.readUtf(256) : "";
+        this.parentModuleNodeId = buf.isReadable() ? buf.readUtf(256) : "";
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -69,6 +82,9 @@ public class C2SCommitWorkspacePacket {
         buf.writeVarInt(modifiedNodes);
         buf.writeVarInt(deletedNodes);
         buf.writeUtf(folderPath != null ? folderPath : "");
+        buf.writeUtf(pageType != null ? pageType : "STANDARD");
+        buf.writeUtf(parentPageId != null ? parentPageId : "");
+        buf.writeUtf(parentModuleNodeId != null ? parentModuleNodeId : "");
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctxSupplier) {
@@ -117,6 +133,9 @@ public class C2SCommitWorkspacePacket {
                     page.setCompressedGraphData(compressedNBT);
                 }
             }
+            page.setPageType(com.gtceu.calcboard.api.storage.PageType.fromNameSafe(pageType, com.gtceu.calcboard.api.storage.PageType.STANDARD));
+            page.setParentPageId(parentPageId);
+            page.setParentModuleNodeId(parentModuleNodeId);
             ws.addOrUpdatePage(page);
 
             // 4. Record commit history

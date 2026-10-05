@@ -395,6 +395,12 @@ flowchart LR
 3. **Proportional Scaling**: Changing machine count on the compound card proportionally scales all internal machine counts and flow rates.
 4. **Distinct Sequenced Assembly Machine Icons (`CompoundRecipeBuilder.LayerSpec`)**: Automatically extracts and assigns distinct machine icons (Deployer, Spout, Mechanical Press, Mechanical Saw) for each intermediate step in Create Sequenced Assembly compound cards.
 
+### 3.4 Collaborative Workspace Sub-Page Routing (`WorkspacePageRegistry`, `IWorkspacePageHandler`)
+- **Multi-Environment Page Dispatch**:
+  - When modules are created (`GroupModuleCommand`), expanded (`ExpandModuleCommand`), or deleted/restored, `WorkspacePageRegistry` inspects the active flow graph context.
+  - Local Environment (`DefaultLocalPageHandler`): Registers and manages subpages in local personal boards via `BoardManager`.
+  - Collaborative Team Environment (`ClientWorkspaceState`): Isolates and creates subpages (`PageType.MODULE`, `parentPageId`, `parentModuleNodeId`) directly within the remote team workspace, synchronizing packets in real time and maintaining complete Undo/Redo fidelity.
+
 ---
 
 ## 4. Serialization, Clipboard & Disk Management (`BlueprintCodec`, `BlueprintFileManager`, `NodeClipboard`)

@@ -34,6 +34,7 @@ public final class IconPrewarmer {
 
     private static final IconPrewarmer INSTANCE = new IconPrewarmer();
     private static final int MAX_PER_TICK = 2;
+    private static volatile boolean forceEnabledForTesting = false;
 
     private final Queue<PrewarmRequest> queue = new ConcurrentLinkedQueue<>();
     private final Set<String> queuedKeys = ConcurrentHashMap.newKeySet();
@@ -45,8 +46,16 @@ public final class IconPrewarmer {
         return INSTANCE;
     }
 
+    public static void setForceEnabledForTesting(boolean enabled) {
+        forceEnabledForTesting = enabled;
+    }
+
+    private static boolean isEnabled() {
+        return forceEnabledForTesting || LocalWebServerDaemon.getInstance().isRunning();
+    }
+
     public void enqueue(FlowGraph graph) {
-        if (graph == null) return;
+        if (graph == null || !isEnabled()) return;
         com.gtceu.calcboard.GregTechCalcBoard.LOGGER.info("[IconPrewarmer] Enqueueing graph with {} nodes", graph.getNodes().size());
         for (RecipeNode node : graph.getNodes()) {
             enqueue(node);
@@ -54,7 +63,7 @@ public final class IconPrewarmer {
     }
 
     public void enqueue(RecipeNode node) {
-        if (node == null) return;
+        if (node == null || !isEnabled()) return;
         String machineId = resolveMachineId(node);
         if (!machineId.isEmpty()) {
             enqueueItem(machineId, null);
@@ -90,7 +99,7 @@ public final class IconPrewarmer {
     }
 
     public void enqueueItem(String itemId, String nbt) {
-        if (itemId == null || itemId.isBlank()) return;
+        if (itemId == null || itemId.isBlank() || !isEnabled()) return;
         PrewarmRequest req = PrewarmRequest.item(itemId, nbt);
         if (failedKeys.contains(req.deduplicationKey())) return;
         if (IconDiskCache.getInstance().isItemCached(itemId, nbt)) return;
@@ -101,7 +110,7 @@ public final class IconPrewarmer {
     }
 
     public void enqueueFluid(String fluidId, Integer tint) {
-        if (fluidId == null || fluidId.isBlank()) return;
+        if (fluidId == null || fluidId.isBlank() || !isEnabled()) return;
         PrewarmRequest req = PrewarmRequest.fluid(fluidId, tint);
         if (failedKeys.contains(req.deduplicationKey())) return;
         if (IconDiskCache.getInstance().isFluidCached(fluidId, tint)) return;
@@ -112,6 +121,12 @@ public final class IconPrewarmer {
     }
 
     public void tick() {
+        if (!LocalWebServerDaemon.getInstance().isRunning()) {
+            if (!queue.isEmpty()) {
+                clear();
+            }
+            return;
+        }
         if (queue.isEmpty() || !MicroIconRenderer.isClientRenderAvailable()) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.level == null || mc.player == null) return;

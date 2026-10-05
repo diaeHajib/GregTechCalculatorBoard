@@ -8,6 +8,12 @@ import com.gtceu.calcboard.api.type.ToolbarDisplayMode;
 import com.gtceu.calcboard.api.type.WireAnimationMode;
 import com.gtceu.calcboard.api.type.WireColorPreset;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
+
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Encapsulates user preferences and display settings for the Calculator Board.
@@ -43,6 +49,7 @@ public class BoardSettings {
     private boolean autoRatioFractionalDefault = false;
     private boolean preserveFractionalAnchor = true;
     private boolean slimCardMode = false;
+    private final Set<String> collapsedFolders = new LinkedHashSet<>();
 
     public void resetToDefault() {
         this.hasSeenWelcomePrompt = false;
@@ -73,6 +80,7 @@ public class BoardSettings {
         this.autoRatioFractionalDefault = false;
         this.preserveFractionalAnchor = true;
         this.slimCardMode = false;
+        this.collapsedFolders.clear();
     }
 
     public void serializeNBT(CompoundTag tag) {
@@ -105,6 +113,13 @@ public class BoardSettings {
         tag.putBoolean("autoRatioFractionalDefault", autoRatioFractionalDefault);
         tag.putBoolean("preserveFractionalAnchor", preserveFractionalAnchor);
         tag.putBoolean("slimCardMode", slimCardMode);
+        if (!collapsedFolders.isEmpty()) {
+            ListTag collapsedList = new ListTag();
+            for (String folder : collapsedFolders) {
+                collapsedList.add(StringTag.valueOf(folder));
+            }
+            tag.put("collapsedFolders", collapsedList);
+        }
     }
 
     public void deserializeNBT(CompoundTag rootTag) {
@@ -210,6 +225,31 @@ public class BoardSettings {
         }
         if (rootTag.contains("slimCardMode")) {
             this.slimCardMode = rootTag.getBoolean("slimCardMode");
+        }
+        this.collapsedFolders.clear();
+        if (rootTag.contains("collapsedFolders", Tag.TAG_LIST)) {
+            ListTag collapsedList = rootTag.getList("collapsedFolders", Tag.TAG_STRING);
+            for (int i = 0; i < collapsedList.size(); i++) {
+                this.collapsedFolders.add(collapsedList.getString(i));
+            }
+        }
+    }
+
+    public Set<String> getCollapsedFolders() {
+        return collapsedFolders;
+    }
+
+    public boolean isFolderCollapsed(String folderPath) {
+        return folderPath != null && collapsedFolders.contains(folderPath);
+    }
+
+    public void setFolderCollapsed(String folderPath, boolean collapsed) {
+        if (folderPath == null || folderPath.trim().isEmpty()) return;
+        String normalized = folderPath.trim();
+        if (collapsed) {
+            collapsedFolders.add(normalized);
+        } else {
+            collapsedFolders.remove(normalized);
         }
     }
 

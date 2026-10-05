@@ -39,7 +39,7 @@ graph TD
     end
 
     subgraph Core["2. 코어 수학 & 도메인 엔진 (com.gtceu.calcboard.api)"]
-        Storage["storage.* (BoardManager, BoardPage, HistoryManager, BlueprintCodec, RecipeNodeSerializer)"]
+        Storage["storage.* (BoardManager, BoardPage, HistoryManager, BlueprintCodec, RecipeNodeSerializer, WorkspacePageRegistry, IWorkspacePageHandler)"]
         Preset["preset.* (CategoryMachinePreset, CategoryMachinePresetManager)"]
         Model["model.* (RecipeNode, ConnectionEdge, IngredientStack, CanvasGroupFrame, NodeRateCalculator, NodeWorkstationResolver)"]
         Solver["solver.* (FlowGraph, FlowGraphSolver, MassBalanceSolver, FlowBalanceMatrixSolver, FlowEdgeAllocator, FlowGraphModuleHandler)"]
@@ -61,7 +61,7 @@ graph TD
             GR["greate (티어형 키네틱 기계)"]
             TH["thermal (AugmentData, 티어 키트, 다이나모, RF/t)"]
             SY["systeams (보일러, 증기 다이나모, 증기 mB/s)"]
-            ST["start (StarTReflectionBridge, 플라즈마 터빈, 스레딩 헬릭스 구조체, SPT/NPT 특성)"]
+            ST["start (StarTReflectionBridge, 플라즈마 터빈, 스레딩 헬릭스 구조체, 5단계 벌크 처리 모드, SPT/NPT 특성)"]
             TFG["tfg (TerraFirmaGreg 대형 보일러, physics.TFGBoilerPhysics, 부스터 유체)"]
             VN["vanilla (무전력 패시브 폴백)"]
         end
@@ -176,6 +176,7 @@ graph TD
 ### 2.16 전용 서브페이지 복합 공정 모듈 및 경계 I/O 핀 (ADR-043)
 * **1:1 전용 서브페이지 격리**: 복합 공정 모듈을 독립 서브페이지(`PageType.MODULE`)로 격리하여 더블클릭 및 브레드크럼/Esc 키로 부드럽게 탐색합니다.
 * **경계 핀 도메인 규격 (`BoundaryPinNode`)**: 서브페이지 내부에 명시적인 `ModuleInputPin` 및 `ModuleOutputPin` 인터페이스 노드를 배치하여 토폴로지 추론의 모호성을 제거합니다.
+* **협업 워크스페이스 서브페이지 라우팅 (`WorkspacePageRegistry`, `IWorkspacePageHandler`)**: 공유 팀 보드와 로컬 개인 보드 환경에서 복합 모듈 서브페이지가 생성/삭제/복원될 때, 소속 그래프의 컨텍스트를 판별하여 팀 보드 내 격리 및 실시간 동기화와 Undo/Redo 동작을 지원합니다.
 
 ### 2.17 감쇠 순환 공정 닫힌 형태 해석적 솔버 및 정상 상태 시각화 (ADR-044)
 * **무한 등비급수 닫힌 형태 수렴**: 외부 보충 공급 기반 감쇠 순환 공정의 유량을 $S_{\text{steady}} = \frac{S_{\text{ext}}}{1 - r}$ 공식을 통해 오경고(결손) 없이 $O(1)$로 해석 수렴합니다.

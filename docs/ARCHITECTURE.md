@@ -39,7 +39,7 @@ graph TD
     end
 
     subgraph Core["2. Core Domain & Math Engine (com.gtceu.calcboard.api)"]
-        Storage["storage.* (BoardManager, BoardPage, HistoryManager, BlueprintCodec, RecipeNodeSerializer)"]
+        Storage["storage.* (BoardManager, BoardPage, HistoryManager, BlueprintCodec, RecipeNodeSerializer, WorkspacePageRegistry, IWorkspacePageHandler)"]
         Preset["preset.* (CategoryMachinePreset, CategoryMachinePresetManager)"]
         Model["model.* (RecipeNode, ConnectionEdge, IngredientStack, CanvasGroupFrame, NodeRateCalculator, NodeWorkstationResolver)"]
         Solver["solver.* (FlowGraph, FlowGraphSolver, MassBalanceSolver, FlowBalanceMatrixSolver, FlowEdgeAllocator, FlowGraphModuleHandler)"]
@@ -61,7 +61,7 @@ graph TD
             GR["greate (Tiered Kinetic Machines)"]
             TH["thermal (AugmentData, Tier Kits, Dynamos, RF/t)"]
             SY["systeams (Boilers, Steam Dynamos, Steam mB/s)"]
-            ST["start (StarTReflectionBridge, Plasma Turbines, Threading Helix Structures, SPT/NPT Traits)"]
+            ST["start (StarTReflectionBridge, Plasma Turbines, Threading Helix Structures, 5-tier Bulk Processing, SPT/NPT Traits)"]
             TFG["tfg (TerraFirmaGreg Large Boilers, physics.TFGBoilerPhysics, Booster Fluids)"]
             VN["vanilla (Passive Unpowered Fallback)"]
         end
@@ -176,6 +176,7 @@ The Core Domain Engine (`com.gtceu.calcboard.api`) and Common Mod Adapters (`com
 ### 2.16 Dedicated Sub-Page Composite Modules & Boundary I/O Pins (ADR-043)
 * **1:1 Dedicated Sub-Page Isolation**: Upgrades compound modules to independent sub-pages (`PageType.MODULE`) accessible via double-click with breadcrumb and Escape navigation.
 * **Boundary Pin Domain Contracts (`BoundaryPinNode`)**: Defines explicit `ModuleInputPin` and `ModuleOutputPin` boundary interface nodes for sub-pages, eliminating ambiguous topological inferences.
+* **Collaborative Workspace Sub-Page Routing (`WorkspacePageRegistry`, `IWorkspacePageHandler`)**: When composite module sub-pages are created, deleted, or restored across shared team boards and local boards, evaluates the active graph context to ensure strict page isolation, real-time synchronization, and robust Undo/Redo operations.
 
 ### 2.17 Damped Recirculation Loop Closed-Form Solver & Steady-State Visualization (ADR-044)
 * **Infinite Geometric Series Closed-Form Convergence**: Solves steady-state recirculating supply via $S_{\text{steady}} = \frac{S_{\text{ext}}}{1 - r}$ in $O(1)$ without artificial deficit warnings.

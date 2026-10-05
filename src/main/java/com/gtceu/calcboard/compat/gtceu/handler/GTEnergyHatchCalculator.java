@@ -141,7 +141,7 @@ public final class GTEnergyHatchCalculator {
             boolean hasParallelHatch = node.getAddons().stream().anyMatch(a ->
                     a instanceof GTParallelHatchAddon || a.getCategory() == MachineAddon.Category.PARALLEL);
             if (hasParallelHatch && node.getRecipeTier() != null && node.getTargetTier().ordinal() > node.getRecipeTier().ordinal()) {
-                return node.getTargetTier().getVoltage() * 2L;
+                return node.getTargetTier().getVoltage() * 16L;
             }
         }
         return Long.MAX_VALUE;

@@ -352,6 +352,7 @@ public final class GTCEuPatternScanner {
         enrichModifierAbilities(multiDef, abilities);
         enrichIoAbilities(multiDef, abilities);
         enrichStarTThreading(multiDef, abilities);
+        enrichStarTBulking(multiDef, abilities);
     }
 
     private static void enrichModifierAbilities(MultiblockMachineDefinition multiDef, Set<String> abilities) {
@@ -384,7 +385,7 @@ public final class GTCEuPatternScanner {
             }
             if ("THROUGHPUT_BOOSTING".equals(modId)) abilities.add("THROUGHPUT_BOOSTING");
             if ("OVERPRESSURE".equals(modId)) abilities.add("OVERPRESSURE");
-            if ("BULK_PROCESSING".equals(modId)) abilities.add("BULK_PROCESSING");
+            if ("BULK_PROCESSING".equals(modId) || "BULKING".equals(modId)) abilities.add("BULK_PROCESSING");
             if ("THREADING".equals(modId) || "THREADING_MACHINE".equals(modId)) abilities.add("THREADING");
             if ("REFLECTOR_FUSION_REACTOR".equals(modId)) abilities.add("REFLECTOR");
             if ("STEAM_PARALLEL_MULTIBLOCK".equals(modId) || "STEAM_PARALLEL".equals(modId) || modId.contains("STEAM")) {
@@ -421,5 +422,12 @@ public final class GTCEuPatternScanner {
         String clsName = multiDef.getClass().getName().toLowerCase(Locale.ROOT);
         if (!clsName.contains("threading")) return;
         abilities.add("THREADING");
+    }
+
+    private static void enrichStarTBulking(MultiblockMachineDefinition multiDef, Set<String> abilities) {
+        Class<?> mCls = GTCEuReflectionBridge.getMachineClass(multiDef);
+        if (com.gtceu.calcboard.compat.start.StarTReflectionBridge.isBulkingMachineClass(mCls)) {
+            abilities.add("BULK_PROCESSING");
+        }
     }
 }

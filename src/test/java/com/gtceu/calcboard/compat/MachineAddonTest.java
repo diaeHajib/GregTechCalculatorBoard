@@ -1019,7 +1019,7 @@ public class MachineAddonTest {
 
     @Test
     public void testMultiblockTraitSingletonBehavior() {
-        RecipeNode lcrNode = RecipeNode.create("Large Chemical Reactor", 20.0, 120.0, GTVoltageTier.HV);
+        RecipeNode lcrNode = RecipeNode.create("Large Chemical Reactor", 100.0, 120.0, GTVoltageTier.HV);
         lcrNode.setMultiblock(true);
         lcrNode.setMachineIcon(ResourceLocation.tryParse("gtceu:large_chemical_reactor"));
         IModAdapter adapter = ModAdapterRegistry.getAdapterForNode(lcrNode);
@@ -1320,12 +1320,13 @@ public class MachineAddonTest {
                 new MockIdentifiedModifier("ebf_oc"),
                 new MockIdentifiedModifier("throughput_boosting"),
                 new MockIdentifiedModifier("bulk_processing"),
+                new MockIdentifiedModifier("bulking"),
                 new MockIdentifiedModifier("batch_mode")
         );
 
         MockMachineDefinition mockDef = new MockMachineDefinition(modList);
         List<Object> extracted = com.gtceu.calcboard.compat.gtceu.helper.GTCEuReflectionBridge.getRecipeModifiers(mockDef);
-        Assertions.assertEquals(5, extracted.size(), "All 5 modifiers must be flattened and extracted");
+        Assertions.assertEquals(6, extracted.size(), "All 6 modifiers must be flattened and extracted");
 
         List<String> names = extracted.stream()
                 .map(com.gtceu.calcboard.compat.gtceu.helper.GTCEuReflectionBridge::getRecipeModifierName)
@@ -1335,6 +1336,7 @@ public class MachineAddonTest {
         Assertions.assertTrue(names.contains("EBF_OC"));
         Assertions.assertTrue(names.contains("THROUGHPUT_BOOSTING"));
         Assertions.assertTrue(names.contains("BULK_PROCESSING"));
+        Assertions.assertTrue(names.contains("BULKING"));
         Assertions.assertTrue(names.contains("BATCH_MODE"));
     }
 
@@ -1526,6 +1528,72 @@ public class MachineAddonTest {
                 com.gtceu.calcboard.compat.gtceu.physics.GTPowerCalculator.computeOverclock(node, GTVoltageTier.MV, false);
 
         Assertions.assertEquals(4.0, res.durationTicks(), 0.001);
+    }
+
+    @Test
+    public void testStarTBulkingTypesAndLifecycle() {
+        ResourceLocation ultraBarrelId = ResourceLocation.tryParse("gtceu:ultra_barrel");
+        MultiblockDetector.registerMultiblock(ultraBarrelId);
+        MultiblockDetector.registerBulkProcessingMultiblock(ultraBarrelId);
+        MultiblockDetector.registerThroughputBoostingMultiblock(ultraBarrelId);
+
+        List<MachineAddon> crawlerTraits = new ArrayList<>();
+        com.gtceu.calcboard.compat.gtceu.GTCEuAddonCrawler.addBuiltinTraits(crawlerTraits);
+
+        MachineAddon bulk4 = crawlerTraits.stream().filter(a -> "gtceu:bulk_processing_4_3".equals(a.getId())).findFirst().orElseThrow();
+        MachineAddon bulk8 = crawlerTraits.stream().filter(a -> "gtceu:bulk_processing_8_6".equals(a.getId())).findFirst().orElseThrow();
+        MachineAddon bulk16 = crawlerTraits.stream().filter(a -> "gtceu:bulk_processing".equals(a.getId())).findFirst().orElseThrow();
+        MachineAddon bulk32 = crawlerTraits.stream().filter(a -> "gtceu:bulk_processing_32_26".equals(a.getId())).findFirst().orElseThrow();
+        MachineAddon bulk64 = crawlerTraits.stream().filter(a -> "gtceu:bulk_processing_64_52".equals(a.getId())).findFirst().orElseThrow();
+        MachineAddon tpb = crawlerTraits.stream().filter(a -> "gtceu:throughput_boosting".equals(a.getId())).findFirst().orElseThrow();
+
+        Assertions.assertEquals(4, bulk4.getParallelMultiplier());
+        Assertions.assertEquals(3.25, bulk4.getDurationMultiplier(), 0.001);
+        Assertions.assertEquals(8, bulk8.getParallelMultiplier());
+        Assertions.assertEquals(6.5, bulk8.getDurationMultiplier(), 0.001);
+        Assertions.assertEquals(16, bulk16.getParallelMultiplier());
+        Assertions.assertEquals(13.0, bulk16.getDurationMultiplier(), 0.001);
+        Assertions.assertEquals(32, bulk32.getParallelMultiplier());
+        Assertions.assertEquals(26.0, bulk32.getDurationMultiplier(), 0.001);
+        Assertions.assertEquals(64, bulk64.getParallelMultiplier());
+        Assertions.assertEquals(52.0, bulk64.getDurationMultiplier(), 0.001);
+
+        RecipeNode node = RecipeNode.create("Ultra Barrel Test", 100.0, 20.0, GTVoltageTier.UEV);
+        node.setMultiblock(true);
+        node.setMachineIcon(ultraBarrelId);
+        node.getAddons().clear();
+
+        IModAdapter adapter = ModAdapterRegistry.getAdapterForNode(node);
+        Assertions.assertNotNull(adapter);
+        Assertions.assertTrue(adapter.isAddonCompatible(node, bulk4));
+        Assertions.assertTrue(adapter.isAddonCompatible(node, bulk8));
+        Assertions.assertTrue(adapter.isAddonCompatible(node, bulk16));
+        Assertions.assertTrue(adapter.isAddonCompatible(node, bulk32));
+        Assertions.assertTrue(adapter.isAddonCompatible(node, bulk64));
+
+        adapter.onAddonInstalled(node, bulk4);
+        Assertions.assertTrue(node.getAddons().contains(bulk4));
+        Assertions.assertEquals(4, node.getCombinedParallelMultiplier());
+        Assertions.assertEquals(3.25, node.getCombinedDurationMultiplier(), 0.001);
+
+        adapter.onAddonInstalled(node, bulk16);
+        Assertions.assertFalse(node.getAddons().contains(bulk4));
+        Assertions.assertTrue(node.getAddons().contains(bulk16));
+        Assertions.assertEquals(16, node.getCombinedParallelMultiplier());
+        Assertions.assertEquals(13.0, node.getCombinedDurationMultiplier(), 0.001);
+
+        adapter.onAddonInstalled(node, bulk4);
+        adapter.onAddonInstalled(node, tpb);
+        Assertions.assertTrue(node.getAddons().contains(bulk4));
+        Assertions.assertFalse(node.getAddons().contains(bulk16));
+        Assertions.assertTrue(node.getAddons().contains(tpb));
+        Assertions.assertEquals(16, node.getCombinedParallelMultiplier());
+        Assertions.assertEquals(5.2, node.getCombinedDurationMultiplier(), 0.001);
+
+        ResourceLocation nonBulkId = ResourceLocation.tryParse("gtceu:electric_blast_furnace");
+        com.gtceu.calcboard.compat.gtceu.helper.GTCEuMachineLifecycleHandler.purgeIncompatibleAddons(node, ultraBarrelId, nonBulkId);
+        Assertions.assertFalse(node.getAddons().contains(bulk4));
+        Assertions.assertFalse(node.getAddons().contains(bulk16));
     }
 
     private static boolean hasTranslatableKey(List<Component> tooltip, String key) {

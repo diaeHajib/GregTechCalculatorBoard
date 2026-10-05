@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Client-side singleton maintaining the current team workspace state, remote page caches, active locks, and presence.
  */
-public class ClientWorkspaceState {
+public class ClientWorkspaceState implements com.gtceu.calcboard.api.storage.IWorkspacePageHandler {
 
     public enum WorkspaceMode {
         LOCAL,
@@ -47,6 +47,7 @@ public class ClientWorkspaceState {
     public static synchronized ClientWorkspaceState getInstance() {
         if (instance == null) {
             instance = new ClientWorkspaceState();
+            com.gtceu.calcboard.api.storage.WorkspacePageRegistry.registerCollaborativeHandler(instance);
         }
         return instance;
     }
@@ -218,6 +219,9 @@ public class ClientWorkspaceState {
     private BoardPage createBoardPageFromTeamPage(TeamWorkspacePage tp) {
         FlowGraph graph = getTeamGraph(tp.getPageId());
         BoardPage bp = new BoardPage(tp.getPageId(), tp.getTitle(), graph);
+        bp.setPageType(tp.getPageType());
+        bp.setParentPageId(tp.getParentPageId());
+        bp.setParentModuleNodeId(tp.getParentModuleNodeId());
         String folder = tp.getFolderPath();
         String title = tp.getTitle();
         if ((folder == null || folder.isEmpty()) && title != null && title.contains("/")) {
@@ -234,12 +238,7 @@ public class ClientWorkspaceState {
     }
 
     public static BoardPage resolveActiveWorkspacePage(String pageId) {
-        if (pageId == null || pageId.isEmpty()) return null;
-        ClientWorkspaceState state = getInstance();
-        if (state.isTeamMode()) {
-            return state.getTeamPageAsBoardPage(pageId);
-        }
-        return com.gtceu.calcboard.api.storage.BoardManager.getInstance().getPage(pageId).orElse(null);
+        return com.gtceu.calcboard.api.storage.WorkspacePageRegistry.resolvePage(pageId);
     }
 
     public FlowGraph getActiveTeamGraph() {
@@ -354,10 +353,16 @@ public class ClientWorkspaceState {
                 if (page == null) {
                     page = new TeamWorkspacePage(pm.getPageId(), pm.getTitle(), pm.getRevision(), new byte[0]);
                     page.setFolderPath(pm.getFolderPath());
+                    page.setPageType(com.gtceu.calcboard.api.storage.PageType.fromNameSafe(pm.getPageType(), com.gtceu.calcboard.api.storage.PageType.STANDARD));
+                    page.setParentPageId(pm.getParentPageId());
+                    page.setParentModuleNodeId(pm.getParentModuleNodeId());
                     remotePages.put(pm.getPageId(), page);
                 } else {
                     page.setTitle(pm.getTitle());
                     page.setFolderPath(pm.getFolderPath());
+                    page.setPageType(com.gtceu.calcboard.api.storage.PageType.fromNameSafe(pm.getPageType(), com.gtceu.calcboard.api.storage.PageType.STANDARD));
+                    page.setParentPageId(pm.getParentPageId());
+                    page.setParentModuleNodeId(pm.getParentModuleNodeId());
                     if (page.getPageRevision() != pm.getRevision()) {
                         // Invalidate cache when revision changed
                         teamGraphs.remove(pm.getPageId());
@@ -493,6 +498,142 @@ public class ClientWorkspaceState {
         }
     }
 
+    public void addTeamPage(TeamWorkspacePage page, FlowGraph graph) {
+        if (page == null) return;
+        remotePages.put(page.getPageId(), page);
+        if (graph != null) {
+            teamGraphs.put(page.getPageId(), graph);
+            cachedRevisions.put(page.getPageId(), page.getPageRevision());
+        }
+        markPageDirty(page.getPageId());
+
+        if (isCollaborationEnabled()) {
+            UUID teamId = getCurrentTeamId() != null
+                    ? getCurrentTeamId()
+                    : (net.minecraft.client.Minecraft.getInstance().player != null ? net.minecraft.client.Minecraft.getInstance().player.getUUID() : UUID.randomUUID());
+            byte[] data = page.getCompressedGraphData();
+            if ((data == null || data.length == 0) && graph != null) {
+                data = BlueprintCodec.compressTag(graph.serializeNBT());
+                page.setCompressedGraphData(data);
+            }
+            int nodeCount = graph != null ? graph.getNodes().size() : 0;
+            ClientChunkedStreamHelper.commitPageSafely(
+                    teamId, page.getPageId(), page.getTitle(), page.getFolderPath(),
+                    page.getPageType().name(), page.getParentPageId(), page.getParentModuleNodeId(),
+                    page.getPageRevision(), "Created " + page.getTitle(), data, nodeCount, 0, 0
+            );
+        }
+    }
+
+    public void removeTeamPage(String pageId) {
+        if (pageId == null) return;
+        remotePages.remove(pageId);
+        teamGraphs.remove(pageId);
+        cachedRevisions.remove(pageId);
+        dirtyPages.remove(pageId);
+        myHeldLocks.remove(pageId);
+        pageViewports.remove(pageId);
+
+        if (isCollaborationEnabled()) {
+            UUID teamId = getCurrentTeamId() != null
+                    ? getCurrentTeamId()
+                    : (net.minecraft.client.Minecraft.getInstance().player != null ? net.minecraft.client.Minecraft.getInstance().player.getUUID() : UUID.randomUUID());
+            com.gtceu.calcboard.network.NetworkHandler.sendToServer(
+                    new com.gtceu.calcboard.network.packet.c2s.C2SDeleteTeamPagePacket(teamId, pageId)
+            );
+        }
+    }
+
+    public void restoreTeamPage(BoardPage page) {
+        if (page == null) return;
+        byte[] data = BlueprintCodec.compressTag(page.getGraph().serializeNBT());
+        TeamWorkspacePage tp = new TeamWorkspacePage(page.getId(), page.getName(), page.getFolderPath(), 1, data);
+        tp.setPageType(page.getPageType());
+        tp.setParentPageId(page.getParentPageId());
+        tp.setParentModuleNodeId(page.getParentModuleNodeId());
+        addTeamPage(tp, page.getGraph());
+    }
+
+    @Override
+    public boolean isApplicable(FlowGraph graph) {
+        if (isTeamMode()) return true;
+        if (graph == null) return false;
+        if (getActiveTeamGraph() == graph) return true;
+        for (TeamWorkspacePage tp : getRemotePages()) {
+            if (teamGraphs.get(tp.getPageId()) == graph) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public BoardPage resolvePage(String pageId) {
+        if (pageId == null || pageId.isEmpty()) return null;
+        if (isTeamMode() || getRemotePage(pageId) != null) {
+            return getTeamPageAsBoardPage(pageId);
+        }
+        return null;
+    }
+
+    @Override
+    public BoardPage findPageForGraph(FlowGraph graph) {
+        if (graph == null) return null;
+        if (isTeamMode()) {
+            for (TeamWorkspacePage tp : getRemotePages()) {
+                if (teamGraphs.get(tp.getPageId()) == graph) {
+                    return getTeamPageAsBoardPage(tp.getPageId());
+                }
+            }
+            if (getActiveTeamGraph() == graph) {
+                return getTeamPageAsBoardPage(getActiveTeamPageId());
+            }
+            return getTeamPageAsBoardPage(getActiveTeamPageId());
+        }
+        for (TeamWorkspacePage tp : getRemotePages()) {
+            if (teamGraphs.get(tp.getPageId()) == graph) {
+                return getTeamPageAsBoardPage(tp.getPageId());
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public void addModuleSubPage(String subPageId, String title, FlowGraph subGraph, String parentPageId, String parentModuleNodeId) {
+        TeamWorkspacePage subTeamPage = new TeamWorkspacePage(subPageId, title);
+        subTeamPage.setPageType(com.gtceu.calcboard.api.storage.PageType.MODULE);
+        subTeamPage.setParentPageId(parentPageId);
+        subTeamPage.setParentModuleNodeId(parentModuleNodeId);
+        byte[] compressed = BlueprintCodec.compressTag(subGraph.serializeNBT());
+        subTeamPage.setCompressedGraphData(compressed);
+        addTeamPage(subTeamPage, subGraph);
+        if (parentPageId != null && !parentPageId.isEmpty()) {
+            markPageDirty(parentPageId);
+        }
+    }
+
+    @Override
+    public void removeModuleSubPage(String subPageId) {
+        if (subPageId == null || subPageId.isEmpty()) return;
+        if (isTeamMode() || getRemotePage(subPageId) != null) {
+            removeTeamPage(subPageId);
+        } else {
+            com.gtceu.calcboard.api.storage.BoardManager.getInstance().removePage(subPageId);
+        }
+    }
+
+    @Override
+    public void restoreModuleSubPage(BoardPage page) {
+        if (page == null) return;
+        if (isTeamMode()) {
+            restoreTeamPage(page);
+        } else {
+            if (com.gtceu.calcboard.api.storage.BoardManager.getInstance().getPage(page.getId()).isEmpty()) {
+                com.gtceu.calcboard.api.storage.BoardManager.getInstance().getPageManager().addPage(page);
+            }
+        }
+    }
+
     public void clear() {
         currentMode = WorkspaceMode.LOCAL;
         currentTeamId = null;
@@ -509,6 +650,7 @@ public class ClientWorkspaceState {
         cachedRevisions.clear();
         pageViewports.clear();
         ChunkedPayloadAssembler.clear();
+        com.gtceu.calcboard.api.storage.WorkspacePageRegistry.registerCollaborativeHandler(this);
     }
 }
 

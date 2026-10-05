@@ -31,9 +31,9 @@ public final class FlowGraphModuleHandler {
         while (curParentId != null && !curParentId.isEmpty() && !visited.contains(curParentId)) {
             visited.add(curParentId);
             depth++;
-            Optional<BoardPage> parent = BoardManager.getInstance().getPage(curParentId);
-            if (parent.isPresent()) {
-                curParentId = parent.get().getParentPageId();
+            BoardPage parent = com.gtceu.calcboard.api.storage.WorkspacePageRegistry.resolvePage(curParentId);
+            if (parent != null) {
+                curParentId = parent.getParentPageId();
             } else {
                 break;
             }
@@ -41,15 +41,18 @@ public final class FlowGraphModuleHandler {
         return depth;
     }
 
+    public static boolean isTeamContext(FlowGraph graph) {
+        return !(com.gtceu.calcboard.api.storage.WorkspacePageRegistry.getHandler(graph) instanceof com.gtceu.calcboard.api.storage.DefaultLocalPageHandler);
+    }
+
     public static BoardPage findPageForGraph(FlowGraph graph) {
         if (graph == null) return null;
-        BoardManager bm = BoardManager.getInstance();
-        for (BoardPage page : bm.getPages()) {
-            if (page.getGraph() == graph) {
-                return page;
-            }
-        }
-        return bm.getActivePage();
+        return com.gtceu.calcboard.api.storage.WorkspacePageRegistry.findPageForGraph(graph);
+    }
+
+    public static void removeModuleSubPageSafely(String subPageId) {
+        if (subPageId == null || subPageId.isEmpty()) return;
+        com.gtceu.calcboard.api.storage.WorkspacePageRegistry.removeModuleSubPage(subPageId);
     }
 
     /**
@@ -94,18 +97,17 @@ public final class FlowGraphModuleHandler {
         List<FlowGraph.ConnectionEdge> externalEdges = new ArrayList<>();
         allocateModulePortsAndRewireEdges(graph, subGraph, selectedNodes, selectedIdSet, summary, moduleNode, externalEdges);
 
-        BoardPage subPage = new BoardPage(UUID.randomUUID().toString(), moduleName != null && !moduleName.trim().isEmpty() ? moduleName.trim() : "Compound Module", subGraph);
-        subPage.setPageType(PageType.MODULE);
-        if (parentPage != null) {
-            subPage.setParentPageId(parentPage.getId());
-        }
-        subPage.setParentModuleNodeId(moduleNode.getId());
-        moduleNode.setSubPageId(subPage.getId());
-        BoardManager.getInstance().getPageManager().addPage(subPage);
+        String subPageId = UUID.randomUUID().toString();
+        String subPageTitle = moduleName != null && !moduleName.trim().isEmpty() ? moduleName.trim() : "Compound Module";
+        String parentId = parentPage != null ? parentPage.getId() : "";
+
+        moduleNode.setSubPageId(subPageId);
+        com.gtceu.calcboard.api.storage.WorkspacePageRegistry.addModuleSubPage(graph, subPageId, subPageTitle, subGraph, parentId, moduleNode.getId());
 
         updateGraphWithModule(graph, selectedNodes, moduleNode, externalEdges);
         return moduleNode;
     }
+
 
     public static RecipeNode compressToVirtualModule(FlowGraph graph, Set<String> targetNodeIds, String moduleName) {
         if (graph == null || targetNodeIds == null || targetNodeIds.isEmpty()) {
@@ -750,11 +752,12 @@ public final class FlowGraphModuleHandler {
 
         FlowGraph subGraph = moduleNode.getSubGraph();
         if (subGraph == null && !moduleNode.getSubPageId().isEmpty()) {
-            BoardManager.getInstance().getPage(moduleNode.getSubPageId()).ifPresent(p -> {
+            BoardPage p = com.gtceu.calcboard.api.storage.WorkspacePageRegistry.resolvePage(moduleNode.getSubPageId());
+            if (p != null) {
                 scaleGraphInternalNodes(p.getGraph(), factor);
                 FlowGraphSolver.computeSummary(p.getGraph());
                 syncModulePortsFromSubPage(moduleNode, p);
-            });
+            }
             return;
         }
         if (subGraph != null) {
@@ -786,12 +789,7 @@ public final class FlowGraphModuleHandler {
 
         String subPageId = moduleNode.getSubPageId();
         if (subPageId != null && !subPageId.isEmpty()) {
-            BoardManager.getInstance().getPage(subPageId).ifPresent(subPage -> {
-                int idx = BoardManager.getInstance().getPages().indexOf(subPage);
-                if (idx >= 0) {
-                    BoardManager.getInstance().removePage(idx);
-                }
-            });
+            removeModuleSubPageSafely(subPageId);
         }
 
         double sumX = 0, sumY = 0;

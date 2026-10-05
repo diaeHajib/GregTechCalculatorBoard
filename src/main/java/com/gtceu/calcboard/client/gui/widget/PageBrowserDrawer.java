@@ -46,7 +46,7 @@ public class PageBrowserDrawer {
     private String promptTargetFolder = "";
     private BoardPage promptTargetPage = null;
 
-    private final Set<String> collapsedFolders = new HashSet<>();
+    private final Set<String> collapsedFolders;
     private final Set<String> selectedPageIds = new LinkedHashSet<>();
     private final Set<String> selectedFolderPaths = new LinkedHashSet<>();
     private PageBrowserTreeModel.TreeItemRef lastClickedItem = null;
@@ -64,6 +64,7 @@ public class PageBrowserDrawer {
 
     public PageBrowserDrawer(IBoardScreenContext screen) {
         this.screen = screen;
+        this.collapsedFolders = BoardManager.getInstance().getCollapsedFolders();
     }
 
     public boolean isOpen() {
@@ -262,7 +263,6 @@ public class PageBrowserDrawer {
                     screen.openDeletePageDialog(contextPageIndex, contextPage.getName());
                 }
                 contextMenuOpen = false;
-                setOpen(false);
             }));
         } else if (contextFolder != null && !contextFolder.isEmpty()) {
             items.add(new ContextMenuItem("§e≡ " + Component.translatable("gui.gtcalcboard.browser.new_subfolder").getString(), () -> {
@@ -312,10 +312,29 @@ public class PageBrowserDrawer {
             } else {
                 screen.openDeleteMultiplePagesDialog(new ArrayList<>(selectedPageIds));
             }
+            selectedPageIds.clear();
         }
         selectedFolderPaths.clear();
         contextMenuOpen = false;
-        setOpen(false);
+    }
+
+    public void onPageDeleted(String pageId) {
+        if (pageId == null) return;
+        selectedPageIds.remove(pageId);
+        if (contextPage != null && pageId.equals(contextPage.getId())) {
+            contextPage = null;
+            contextPageIndex = -1;
+        }
+        if (lastClickedItem != null && !lastClickedItem.isFolder() && pageId.equals(lastClickedItem.idOrPath())) {
+            lastClickedItem = null;
+        }
+    }
+
+    public void onMultiplePagesDeleted(Collection<String> pageIds) {
+        if (pageIds == null || pageIds.isEmpty()) return;
+        for (String pid : pageIds) {
+            onPageDeleted(pid);
+        }
     }
 
     private void deleteFolder(String folder) {

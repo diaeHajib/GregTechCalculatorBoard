@@ -179,7 +179,7 @@ public class BoardActionHandler {
         screen.getGraph().removeNode(targetNode);
         for (RecipeNode rn : removedNodes) {
             if (rn.isModule() && rn.getSubPageId() != null) {
-                BoardManager.getInstance().removePage(rn.getSubPageId());
+                com.gtceu.calcboard.api.solver.FlowGraphModuleHandler.removeModuleSubPageSafely(rn.getSubPageId());
             }
         }
         recordRemovalCommands(targetNode, removedNodes, removedFrames, removedEdges);

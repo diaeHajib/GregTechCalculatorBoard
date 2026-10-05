@@ -47,6 +47,7 @@ Perform these 12 critical manual checks in a test world before publishing a new 
 ### 4. History Stack & Persistence
 - [ ] **Undo / Redo Fidelity**: Perform node moves, wire cuts, and recipe switches; confirm `Ctrl + Z` and `Ctrl + Y` restore exact positions and wire states without orphan nodes.
 - [ ] **Save & Reload Integrity**: Place machines and wires $\rightarrow$ save world $\rightarrow$ exit to main menu $\rightarrow$ reload world; confirm board layout and calculations restore with 100% fidelity.
+- [ ] **Folder Browser State Persistence**: In folder browser, collapse/expand folders and delete a page; confirm browser stays open without closing, and reopening the board screen retains the collapsed/expanded folder states.
 - [ ] **Blueprint Clipboard**: Click `Share` (Base64 copied to clipboard) $\rightarrow$ click `Import` in another page; confirm factory pastes with identical parameters.
 
 ### 5. Dedicated Server & Multiplayer Safety

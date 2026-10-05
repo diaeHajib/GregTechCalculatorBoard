@@ -45,6 +45,12 @@ public final class GTAddonCompatibilityHandler {
         return GTMufflerMaintenanceHelper.isMufflerAddon(addon);
     }
 
+    public static boolean isBulkProcessingAddon(MachineAddon addon) {
+        if (addon == null || addon.getId() == null) return false;
+        String id = addon.getId();
+        return id.equals("gtceu:bulk_processing") || id.startsWith("gtceu:bulk_processing_");
+    }
+
     private static boolean isMaintenanceAddonCompatible(RecipeNode node, MachineAddon addon) {
         return GTMufflerMaintenanceHelper.isMaintenanceAddonCompatible(node, addon);
     }
@@ -387,7 +393,7 @@ public final class GTAddonCompatibilityHandler {
         if (addon.getId().equals("gtceu:throughput_boosting")) {
             return !isGen && node.isMultiblock() && MultiblockDetector.supportsThroughputBoosting(node.getMachineIcon());
         }
-        if (addon.getId().equals("gtceu:bulk_processing")) {
+        if (isBulkProcessingAddon(addon)) {
             return !isGen && node.isMultiblock() && MultiblockDetector.supportsBulkProcessing(node.getMachineIcon());
         }
         if (addon.getId().equals("gtceu:overpressure_autoclave")) {

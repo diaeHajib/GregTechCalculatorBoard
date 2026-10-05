@@ -21,8 +21,9 @@ public final class ClientChunkedStreamHelper {
     /**
      * Streams the committed page data to the server safely in 512KB chunks.
      */
-    public static void commitPageSafely(UUID teamId, String pageId, String pageTitle, String folderPath, int revision,
-                                        String commitMessage, byte[] compressedNBT,
+    public static void commitPageSafely(UUID teamId, String pageId, String pageTitle, String folderPath,
+                                        String pageType, String parentPageId, String parentModuleNodeId,
+                                        int revision, String commitMessage, byte[] compressedNBT,
                                         int addedNodes, int modifiedNodes, int deletedNodes) {
         byte[] payload = compressedNBT != null ? compressedNBT : new byte[0];
 
@@ -30,7 +31,8 @@ public final class ClientChunkedStreamHelper {
             UUID transferId = UUID.randomUUID();
             NetworkHandler.sendToServer(new C2SChunkedCommitPacket(
                     transferId, teamId, pageId, pageTitle, folderPath, revision, commitMessage,
-                    0, 1, payload, addedNodes, modifiedNodes, deletedNodes
+                    0, 1, payload, addedNodes, modifiedNodes, deletedNodes,
+                    pageType, parentPageId, parentModuleNodeId
             ));
             return;
         }
@@ -45,14 +47,21 @@ public final class ClientChunkedStreamHelper {
 
             NetworkHandler.sendToServer(new C2SChunkedCommitPacket(
                     transferId, teamId, pageId, pageTitle, folderPath, revision, commitMessage,
-                    i, totalChunks, chunk, addedNodes, modifiedNodes, deletedNodes
+                    i, totalChunks, chunk, addedNodes, modifiedNodes, deletedNodes,
+                    pageType, parentPageId, parentModuleNodeId
             ));
         }
+    }
+
+    public static void commitPageSafely(UUID teamId, String pageId, String pageTitle, String folderPath, int revision,
+                                        String commitMessage, byte[] compressedNBT,
+                                        int addedNodes, int modifiedNodes, int deletedNodes) {
+        commitPageSafely(teamId, pageId, pageTitle, folderPath, "STANDARD", "", "", revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes);
     }
 
     public static void commitPageSafely(UUID teamId, String pageId, String pageTitle, int revision,
                                         String commitMessage, byte[] compressedNBT,
                                         int addedNodes, int modifiedNodes, int deletedNodes) {
-        commitPageSafely(teamId, pageId, pageTitle, "", revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes);
+        commitPageSafely(teamId, pageId, pageTitle, "", "STANDARD", "", "", revision, commitMessage, compressedNBT, addedNodes, modifiedNodes, deletedNodes);
     }
 }

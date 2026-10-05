@@ -82,6 +82,14 @@ public class S2CSyncWorkspacePacket {
                 this.pages.get(i).setFolderPath(buf.readUtf(256));
             }
         }
+        if (buf.isReadable()) {
+            for (int i = 0; i < pageCount && buf.isReadable(); i++) {
+                String typeStr = buf.readUtf(64);
+                this.pages.get(i).setPageType(com.gtceu.calcboard.api.storage.PageType.fromNameSafe(typeStr, com.gtceu.calcboard.api.storage.PageType.STANDARD));
+                this.pages.get(i).setParentPageId(buf.readUtf(256));
+                this.pages.get(i).setParentModuleNodeId(buf.readUtf(256));
+            }
+        }
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -124,6 +132,11 @@ public class S2CSyncWorkspacePacket {
 
         for (TeamWorkspacePage p : pages) {
             buf.writeUtf(p.getFolderPath() != null ? p.getFolderPath() : "");
+        }
+        for (TeamWorkspacePage p : pages) {
+            buf.writeUtf(p.getPageType().name());
+            buf.writeUtf(p.getParentPageId());
+            buf.writeUtf(p.getParentModuleNodeId());
         }
     }
 

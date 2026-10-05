@@ -127,7 +127,10 @@ public class TeamWorkspaceData {
                     lockUUID,
                     lockName,
                     lockExpires,
-                    p.getFolderPath()
+                    p.getFolderPath(),
+                    p.getPageType().name(),
+                    p.getParentPageId(),
+                    p.getParentModuleNodeId()
             ));
         }
 

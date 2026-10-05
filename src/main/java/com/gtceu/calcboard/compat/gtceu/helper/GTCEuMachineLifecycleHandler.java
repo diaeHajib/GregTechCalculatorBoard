@@ -137,7 +137,7 @@ public final class GTCEuMachineLifecycleHandler {
             node.getAddons().removeIf(a -> a.getId() != null && a.getId().equals("gtceu:throughput_boosting"));
         }
         if (!MultiblockDetector.supportsBulkProcessing(newIcon)) {
-            node.getAddons().removeIf(a -> a.getId() != null && a.getId().equals("gtceu:bulk_processing"));
+            node.getAddons().removeIf(GTAddonCompatibilityHandler::isBulkProcessingAddon);
         }
         if (!MultiblockDetector.supportsOverpressure(newIcon)) {
             node.getAddons().removeIf(a -> a.getId() != null && a.getId().equals("gtceu:overpressure_autoclave"));

@@ -130,12 +130,6 @@ public final class PatternGraphRegistry {
                     return pageOpt;
                 }
             }
-
-            for (BoardPage page : BoardManager.getInstance().getPages()) {
-                if (page != null && !page.isModuleSubPage() && pageProducesOutput(page, patternId.getPrimaryOutputId())) {
-                    return Optional.of(page);
-                }
-            }
         }
         return Optional.empty();
     }
@@ -352,12 +346,7 @@ public final class PatternGraphRegistry {
     }
 
     private Optional<BoardPage> findPageById(String pageId) {
-        for (BoardPage page : BoardManager.getInstance().getPages()) {
-            if (page.getId().equals(pageId)) {
-                return Optional.of(page);
-            }
-        }
-        return Optional.empty();
+        return BoardManager.getInstance().getPage(pageId);
     }
 
     public CompoundTag serializeNBT() {

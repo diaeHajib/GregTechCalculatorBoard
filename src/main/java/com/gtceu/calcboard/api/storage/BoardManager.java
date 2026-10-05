@@ -14,9 +14,11 @@ import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.Tag;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -36,7 +38,43 @@ public class BoardManager {
 
     private boolean autoLoaded = false;
 
-    private BoardManager() {}
+    private BoardManager() {
+        this.pageManager.addFolderChangeListener(this::handleFolderLifecycleForCollapsedFolders);
+    }
+
+    private void handleFolderLifecycleForCollapsedFolders(IFolderChangeListener.FolderChangeEvent event) {
+        if (event == null || event.action() == null) return;
+        Set<String> collapsed = settings.getCollapsedFolders();
+        if (collapsed.isEmpty()) return;
+
+        if (event.action() == IFolderChangeListener.FolderAction.RENAMED) {
+            handleFolderRenamed(collapsed, event.oldPath(), event.newPath());
+        } else if (event.action() == IFolderChangeListener.FolderAction.DELETED) {
+            handleFolderDeleted(collapsed, event.oldPath());
+        }
+    }
+
+    private void handleFolderRenamed(Set<String> collapsed, String oldPath, String newPath) {
+        if (oldPath == null || oldPath.isEmpty()) return;
+        Set<String> toUpdate = new HashSet<>();
+        for (String f : collapsed) {
+            if (f.equals(oldPath) || f.startsWith(oldPath + "/")) {
+                toUpdate.add(f);
+            }
+        }
+        for (String f : toUpdate) {
+            collapsed.remove(f);
+            if (newPath != null && !newPath.isEmpty()) {
+                String updated = f.equals(oldPath) ? newPath : (newPath + f.substring(oldPath.length()));
+                collapsed.add(updated);
+            }
+        }
+    }
+
+    private void handleFolderDeleted(Set<String> collapsed, String target) {
+        if (target == null || target.isEmpty()) return;
+        collapsed.removeIf(f -> f.equals(target) || f.startsWith(target + "/"));
+    }
 
     public static BoardManager getInstance() {
         INSTANCE.ensureLoaded();
@@ -123,6 +161,10 @@ public class BoardManager {
 
     public boolean isSummaryOverlayCollapsed() { return settings.isSummaryOverlayCollapsed(); }
     public void setSummaryOverlayCollapsed(boolean collapsed) { settings.setSummaryOverlayCollapsed(collapsed); }
+
+    public Set<String> getCollapsedFolders() { return settings.getCollapsedFolders(); }
+    public boolean isFolderCollapsed(String folderPath) { return settings.isFolderCollapsed(folderPath); }
+    public void setFolderCollapsed(String folderPath, boolean collapsed) { settings.setFolderCollapsed(folderPath, collapsed); }
 
     public boolean isHotkeyHudExpanded() { return settings.isHotkeyHudExpanded(); }
     public void setHotkeyHudExpanded(boolean expanded) { settings.setHotkeyHudExpanded(expanded); }

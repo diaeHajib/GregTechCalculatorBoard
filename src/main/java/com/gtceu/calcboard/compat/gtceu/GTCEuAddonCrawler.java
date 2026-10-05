@@ -197,6 +197,22 @@ public class GTCEuAddonCrawler {
         batch.setDiscoverySource("GTCEu Multiblock Trait Specification");
         tryAddTrait(list, seenIds, batch);
 
+        MachineAddon bulk4 = new MachineAddon("gtceu:bulk_processing_4_3", "gui.gtcalcboard.addon.bulk_processing_4_3", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.bulk_processing_4_3.desc", null);
+        bulk4.setParallelMultiplier(4);
+        bulk4.setDurationMultiplier(3.25);
+        bulk4.setEutMultiplier(1.0);
+        bulk4.setPowerConstant(true);
+        bulk4.setDiscoverySource("GTCEu / StarT Multiblock Trait Specification (Bulk 4:3.25)");
+        tryAddTrait(list, seenIds, bulk4);
+
+        MachineAddon bulk8 = new MachineAddon("gtceu:bulk_processing_8_6", "gui.gtcalcboard.addon.bulk_processing_8_6", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.bulk_processing_8_6.desc", null);
+        bulk8.setParallelMultiplier(8);
+        bulk8.setDurationMultiplier(6.5);
+        bulk8.setEutMultiplier(1.0);
+        bulk8.setPowerConstant(true);
+        bulk8.setDiscoverySource("GTCEu / StarT Multiblock Trait Specification (Bulk 8:6.5)");
+        tryAddTrait(list, seenIds, bulk8);
+
         MachineAddon bulk = new MachineAddon("gtceu:bulk_processing", "gui.gtcalcboard.addon.bulk_processing", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.bulk_processing.desc", null);
         bulk.setParallelMultiplier(16);
         bulk.setDurationMultiplier(13.0);
@@ -204,6 +220,22 @@ public class GTCEuAddonCrawler {
         bulk.setPowerConstant(true);
         bulk.setDiscoverySource("GTCEu / StarT Multiblock Trait Specification");
         tryAddTrait(list, seenIds, bulk);
+
+        MachineAddon bulk32 = new MachineAddon("gtceu:bulk_processing_32_26", "gui.gtcalcboard.addon.bulk_processing_32_26", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.bulk_processing_32_26.desc", null);
+        bulk32.setParallelMultiplier(32);
+        bulk32.setDurationMultiplier(26.0);
+        bulk32.setEutMultiplier(1.0);
+        bulk32.setPowerConstant(true);
+        bulk32.setDiscoverySource("GTCEu / StarT Multiblock Trait Specification (Bulk 32:26)");
+        tryAddTrait(list, seenIds, bulk32);
+
+        MachineAddon bulk64 = new MachineAddon("gtceu:bulk_processing_64_52", "gui.gtcalcboard.addon.bulk_processing_64_52", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.bulk_processing_64_52.desc", null);
+        bulk64.setParallelMultiplier(64);
+        bulk64.setDurationMultiplier(52.0);
+        bulk64.setEutMultiplier(1.0);
+        bulk64.setPowerConstant(true);
+        bulk64.setDiscoverySource("GTCEu / StarT Multiblock Trait Specification (Bulk 64:52)");
+        tryAddTrait(list, seenIds, bulk64);
 
         MachineAddon overpressure = new MachineAddon("gtceu:overpressure_autoclave", "gui.gtcalcboard.addon.overpressure_autoclave", MachineAddon.Category.MULTIBLOCK_TRAIT, "gui.gtcalcboard.addon.overpressure_autoclave.desc", ResourceLocation.tryParse("gtceu:autoclave"));
         overpressure.setParallelMultiplier(8);

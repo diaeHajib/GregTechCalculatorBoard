@@ -361,6 +361,18 @@ public class CategoryCapabilityMatrix {
                 true, true, false, false, false, true, true, ResourceLocation.tryParse("gtceu:lp_steam_macerator"), ResourceLocation.tryParse("gtceu:hp_steam_macerator"), null, 0.0
         );
         registerMockCategory(
+                ResourceLocation.tryParse("gtceu:ore_crushing"),
+                List.of(ResourceLocation.tryParse("gtceu:lp_steam_macerator"), ResourceLocation.tryParse("gtceu:hp_steam_macerator"), ResourceLocation.tryParse("gtceu:lv_macerator"), ResourceLocation.tryParse("gtceu:large_macerator")),
+                ResourceLocation.tryParse("gtceu:lv_macerator"),
+                true, true, false, false, false, true, true, ResourceLocation.tryParse("gtceu:lp_steam_macerator"), ResourceLocation.tryParse("gtceu:hp_steam_macerator"), null, 0.0
+        );
+        registerMockCategory(
+                ResourceLocation.tryParse("gtceu:macerator_recycling"),
+                List.of(ResourceLocation.tryParse("gtceu:lp_steam_macerator"), ResourceLocation.tryParse("gtceu:hp_steam_macerator"), ResourceLocation.tryParse("gtceu:lv_macerator"), ResourceLocation.tryParse("gtceu:large_macerator")),
+                ResourceLocation.tryParse("gtceu:lv_macerator"),
+                true, true, false, false, false, true, true, ResourceLocation.tryParse("gtceu:lp_steam_macerator"), ResourceLocation.tryParse("gtceu:hp_steam_macerator"), null, 0.0
+        );
+        registerMockCategory(
                 ResourceLocation.tryParse("gtceu:compressor"),
                 List.of(ResourceLocation.tryParse("gtceu:lp_steam_compressor"), ResourceLocation.tryParse("gtceu:hp_steam_compressor"), ResourceLocation.tryParse("gtceu:lv_compressor")),
                 ResourceLocation.tryParse("gtceu:lv_compressor"),

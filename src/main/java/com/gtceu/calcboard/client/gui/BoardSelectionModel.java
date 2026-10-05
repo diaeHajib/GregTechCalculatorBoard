@@ -270,7 +270,7 @@ public class BoardSelectionModel {
         for (RecipeNode n : removedNodes) {
             graph.removeNode(n.getId());
             if (n.isModule() && n.getSubPageId() != null) {
-                BoardManager.getInstance().removePage(n.getSubPageId());
+                com.gtceu.calcboard.api.solver.FlowGraphModuleHandler.removeModuleSubPageSafely(n.getSubPageId());
             }
         }
         for (FlowGraph.ConnectionEdge e : removedEdges) {
@@ -412,7 +412,7 @@ public class BoardSelectionModel {
         for (RecipeNode n : removedNodes) {
             graph.removeNode(n.getId());
             if (n.isModule() && n.getSubPageId() != null) {
-                BoardManager.getInstance().removePage(n.getSubPageId());
+                com.gtceu.calcboard.api.solver.FlowGraphModuleHandler.removeModuleSubPageSafely(n.getSubPageId());
             }
         }
         for (FlowGraph.ConnectionEdge e : removedEdges) {

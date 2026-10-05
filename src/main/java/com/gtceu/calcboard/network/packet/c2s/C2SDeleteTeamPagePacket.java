@@ -49,17 +49,23 @@ public class C2SDeleteTeamPagePacket {
                 return;
             }
 
-            // Check admin / owner permissions
-            if (!TeamProviderRegistry.getInstance().canPlayerAdministerTeam(player, playerTeamId)) {
-                NetworkHandler.sendToPlayer(player, new S2CWorkspaceErrorPacket(403, "gui.gtcalcboard.error.delete_no_permission"));
-                return;
-            }
-
             TeamBoardSavedData savedData = TeamBoardSavedData.get(player.serverLevel());
             if (savedData == null) return;
 
             String teamName = TeamProviderRegistry.getInstance().getTeamDisplayName(playerTeamId);
             TeamWorkspaceData ws = savedData.getOrCreateWorkspace(playerTeamId, teamName);
+
+            TeamWorkspacePage targetPage = ws.getPage(pageId);
+            boolean isSubPage = targetPage != null && targetPage.isModuleSubPage();
+
+            if (!isSubPage && !TeamProviderRegistry.getInstance().canPlayerAdministerTeam(player, playerTeamId)) {
+                NetworkHandler.sendToPlayer(player, new S2CWorkspaceErrorPacket(403, "gui.gtcalcboard.error.delete_no_permission"));
+                return;
+            }
+            if (isSubPage && !TeamProviderRegistry.getInstance().canPlayerEdit(player, playerTeamId)) {
+                NetworkHandler.sendToPlayer(player, new S2CWorkspaceErrorPacket(403, "gui.gtcalcboard.error.access_denied"));
+                return;
+            }
 
             if (ws.getPages().size() <= 1) {
                 NetworkHandler.sendToPlayer(player, new S2CWorkspaceErrorPacket(400, "gui.gtcalcboard.error.cannot_delete_last_page"));

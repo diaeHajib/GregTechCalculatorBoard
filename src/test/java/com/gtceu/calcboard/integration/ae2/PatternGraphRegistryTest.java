@@ -107,7 +107,7 @@ public class PatternGraphRegistryTest {
     }
 
     @Test
-    public void testFallbackAutoDetectionFromExistingPage() {
+    public void testUnboundExistingPageMustNotBeDetectedAsBound() {
         BoardPage wirePage = boardManager.addPage("Black Steel Wire Page");
         com.gtceu.calcboard.api.model.RecipeNode wiremill = com.gtceu.calcboard.api.model.RecipeNode.create(
                 "Wiremill", 10.0, 32.0, com.gtceu.calcboard.api.type.GTVoltageTier.LV
@@ -121,8 +121,9 @@ public class PatternGraphRegistryTest {
         PatternId wirePattern = PatternId.ofKey("gtceu:fine_black_steel_wire", "Fine Black Steel Wire", ItemStack.EMPTY);
         Optional<BoardPage> detectedOpt = registry.getBoundPage(wirePattern);
 
-        Assertions.assertTrue(detectedOpt.isPresent());
-        Assertions.assertEquals(wirePage.getId(), detectedOpt.get().getId());
+        // Unbound page must NEVER be treated as bound, preventing false AE2 linked page badges
+        Assertions.assertTrue(detectedOpt.isEmpty());
+        Assertions.assertFalse(registry.isPageBound(wirePage.getId()));
     }
 
     @Test

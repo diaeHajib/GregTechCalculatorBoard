@@ -137,7 +137,7 @@ public class JunctionRecirculationLoopRegressionTest {
 
         RecipeNode lbv = graph.findNodeById("8bf36233-946f-4b8b-9f66-74265925c9e3");
         Assertions.assertNotNull(lbv, "Large Brewing Vat must exist");
-        Assertions.assertEquals(70.3125, lbv.getMachineCount(), 0.01, "LBV count should converge to 70.3125");
+        Assertions.assertEquals(35.1563, lbv.getMachineCount(), 0.01, "LBV count should converge to 35.1563");
 
         for (RecipeNode n : graph.getNodes()) {
             Assertions.assertFalse(

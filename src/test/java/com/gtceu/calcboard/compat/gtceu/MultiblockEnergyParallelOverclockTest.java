@@ -1,10 +1,12 @@
 package com.gtceu.calcboard.compat.gtceu;
 
+import com.gtceu.calcboard.api.catalog.MachineAddon;
 import com.gtceu.calcboard.api.catalog.MultiblockDetector;
 import com.gtceu.calcboard.api.model.RecipeNode;
 import com.gtceu.calcboard.api.type.GTVoltageTier;
 import com.gtceu.calcboard.compat.gtceu.addon.GTEnergyHatchAddon;
 import com.gtceu.calcboard.compat.gtceu.addon.GTParallelHatchAddon;
+import com.gtceu.calcboard.compat.gtceu.handler.GTAddonCompatibilityHandler;
 import com.gtceu.calcboard.compat.gtceu.physics.GTPowerCalculator;
 import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Assertions;
@@ -224,5 +226,69 @@ public class MultiblockEnergyParallelOverclockTest {
         Assertions.assertEquals(1, node.getTotalParallel(), "Parallel must be calculated BEFORE coil discounts");
         Assertions.assertEquals(1, GTPowerCalculator.getMaxParallelCapacity(node), "Max parallel capacity must remain 1");
         Assertions.assertEquals(250.0, node.getSingleMachineEUt(), 1e-4, "Total power must reflect 50% discount on single parallel: 250 EU/t");
+    }
+
+    @Test
+    public void testUltraBarrelDurationAndBatching() {
+        ResourceLocation ultraBarrelId = ResourceLocation.tryParse("gtceu:ultra_barrel");
+        MultiblockDetector.registerMultiblock(ultraBarrelId);
+        MultiblockDetector.registerParallelHatchController(ultraBarrelId);
+        MultiblockDetector.registerThroughputBoostingMultiblock(ultraBarrelId);
+        MultiblockDetector.registerBulkProcessingMultiblock(ultraBarrelId);
+        MultiblockDetector.registerBatchModeMultiblock(ultraBarrelId);
+
+        RecipeNode node = RecipeNode.create(ultraBarrelId, "Magmatic Industrial Barrel", 64.0, 30.0, GTVoltageTier.LV);
+        node.setMultiblock(true);
+        node.setTargetTier(GTVoltageTier.UEV);
+
+        // 1024x UEV parallel hatch
+        ResourceLocation phId = ResourceLocation.tryParse("gtceu:uev_parallel_hatch");
+        GTParallelHatchAddon ph = new GTParallelHatchAddon(phId.toString(), "UEV Parallel Hatch", "1024x", phId, 1024, false);
+        node.getAddons().add(ph);
+
+        // Throughput boosting
+        MachineAddon tpb = new MachineAddon("gtceu:throughput_boosting", "Throughput Boosting", MachineAddon.Category.MULTIBLOCK_TRAIT, "", null);
+        tpb.setParallelMultiplier(4);
+        tpb.setDurationMultiplier(1.6);
+        tpb.setEutMultiplier(0.95);
+        tpb.setPowerConstant(true);
+        node.getAddons().add(tpb);
+
+        // Bulk processing 4:3.25
+        MachineAddon bulk4 = new MachineAddon("gtceu:bulk_processing_4_3", "Bulk Processing 4:3.25", MachineAddon.Category.MULTIBLOCK_TRAIT, "", null);
+        bulk4.setParallelMultiplier(4);
+        bulk4.setDurationMultiplier(3.25);
+        bulk4.setEutMultiplier(1.0);
+        bulk4.setPowerConstant(true);
+        node.getAddons().add(bulk4);
+
+        // UEV 16A Energy Hatch (134,217,728 EU/t capacity to power 1024 parallels at 119,537,664 EU/t)
+        ResourceLocation ehId = ResourceLocation.tryParse("gtceu:uev_energy_input_hatch_16a");
+        GTEnergyHatchAddon eh = new GTEnergyHatchAddon(ehId.toString(), "UEV 16A Energy Hatch", "16A", ehId, GTVoltageTier.UEV, 16);
+        node.getAddons().add(eh);
+
+        node.getOutputs().add(com.gtceu.calcboard.api.model.IngredientStack.item(
+                ResourceLocation.tryParse("exnihilosequentia:andesite_pebble"), "Andesite Pebble", 64.0, 1.0));
+
+        node.markOverclockDirty();
+        var ocNoBatch = GTPowerCalculator.computeOverclock(node, GTVoltageTier.UEV, false);
+        Assertions.assertEquals(3.0, ocNoBatch.durationTicks(), 1e-4, "Base 1 tick + 1.6x Throughput (1 tick) + 3.25x Bulking (3 ticks) must equal 3.0 ticks");
+        Assertions.assertEquals(16384, GTPowerCalculator.computeEffectiveParallel(node), "1024 parallel hatch * 4x throughput * 4x bulking must equal 16,384");
+        Assertions.assertEquals(1024, GTPowerCalculator.computePowerEffectiveParallel(node), "Power parallel must only count power-consuming parallel: 1024");
+        Assertions.assertEquals(0.15, node.getEffectiveDurationSeconds(), 1e-4, "3 ticks is 0.15 seconds");
+        double rateNoBatch = node.calculateSingleMachineOutputRate(node.getOutputs().get(0));
+        Assertions.assertEquals(6990506.67, rateNoBatch, 1.0, "Production rate must equal 6,990,506.67 items/s");
+
+        MachineAddon batch = new MachineAddon("gtceu:batch_processing", "Batch Mode", MachineAddon.Category.MULTIBLOCK_TRAIT, "", null);
+        node.getAddons().add(batch);
+        node.markOverclockDirty();
+
+        var ocWithBatch = GTPowerCalculator.computeOverclock(node, GTVoltageTier.UEV, false);
+        Assertions.assertEquals(99.0, ocWithBatch.durationTicks(), 1e-4, "3.0 ticks * 33 batch multiplier must equal 99.0 ticks");
+        Assertions.assertEquals(4.95, node.getEffectiveDurationSeconds(), 1e-4, "99 ticks is 4.95 seconds");
+        Assertions.assertEquals(540672, GTPowerCalculator.computeEffectiveParallel(node), "16,384 * 33 batching must equal 540,672 parallels");
+        Assertions.assertEquals(1024, GTPowerCalculator.computePowerEffectiveParallel(node), "Power parallel must remain 1024 without EU cost");
+        double rateWithBatch = node.calculateSingleMachineOutputRate(node.getOutputs().get(0));
+        Assertions.assertEquals(6990506.67, rateWithBatch, 1.0, "Rate with batching must stay identical: 6,990,506.67 items/s");
     }
 }

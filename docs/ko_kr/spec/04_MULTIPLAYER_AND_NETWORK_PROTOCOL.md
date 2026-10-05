@@ -53,7 +53,8 @@ sequenceDiagram
 클라이언트 GUI 계층이 서버 전용 저장소 패키지(`server.storage.*`)를 직접 역참조하던 아키텍처 계층 역전(Layer Inversion) 결함을 해소하기 위해, 팀 워크스페이스 핵심 DTO를 순수 공통 API 도메인 계층으로 분리 승격하였습니다:
 
 * **`TeamWorkspacePage` (`com.gtceu.calcboard.api.team`)**:
-  - 팀 워크스페이스 내 개별 페이지 메타데이터(페이지 ID, 제목, 수정자, Revision, 생성/수정 타임스탬프)를 캡슐화한 공통 도메인 엔티티.
+  - 팀 워크스페이스 내 개별 페이지 메타데이터(페이지 ID, 제목, 수정자, Revision, 생성/수정 타임스탬프, 폴더 경로)를 캡슐화한 공통 도메인 엔티티.
+  - 서브페이지 메타데이터 지원: `PageType`(`STANDARD`, `MODULE`), `parentPageId`, `parentModuleNodeId`를 보관 및 NBT/패킷 동기화하여 복합 모듈 서브페이지의 계층 구조를 보존.
   - 클라이언트(`ClientWorkspaceState`, `BoardTeamSyncCoordinator`, `PageTabBarWidget`)와 서버(`TeamWorkspaceData`, `TeamBoardSavedData`)가 동일한 DTO 계약을 공유.
 * **`CommitLogEntry` (`com.gtceu.calcboard.api.team`)**:
   - 팀 페이지의 커밋 이력(작성자 UUID, 작성자명, 커밋 메시지, 타임스탬프, 리비전 번호)을 보관하는 불변 레코드.

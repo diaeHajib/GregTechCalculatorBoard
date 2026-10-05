@@ -422,6 +422,12 @@ flowchart LR
 - **순차 조립 레이어 카드 (`CompoundRecipeBuilder.LayerSpec`)**:
   - Create 순차 조립(Sequenced Assembly) 공정의 단계별(Deployer, Spout, Press, Saw) 독립 머신 아이콘 및 가동 사양을 계층 카드에 추출하여 렌더링합니다.
 
+### 3.4 협업 워크스페이스 서브페이지 라우팅 (`WorkspacePageRegistry`, `IWorkspacePageHandler`)
+- **다중 환경 페이지 디스패치**:
+  - 모듈 생성(`GroupModuleCommand`), 확장(`ExpandModuleCommand`), 서브페이지 삭제 및 복원 시 `WorkspacePageRegistry`를 통해 활성 그래프의 컨텍스트를 판정합니다.
+  - 로컬 환경(`DefaultLocalPageHandler`): `BoardManager`를 통해 개인 보드 내에 서브페이지를 등록하고 관리합니다.
+  - 공유 팀 환경(`ClientWorkspaceState`): 원격 팀 보드 내에 서브페이지(`PageType.MODULE`, `parentPageId`, `parentModuleNodeId`)를 격리 생성하고 서버와 실시간 패킷 동기화를 수행하며, 실행 취소(Undo) 및 다시 실행(Redo) 시에도 팀 보드 컨텍스트를 온전히 유지합니다.
+
 ---
 
 ## 4. 직렬화, 클립보드 및 디스크 관리 (`BlueprintCodec`, `BlueprintFileManager`, `NodeClipboard`)

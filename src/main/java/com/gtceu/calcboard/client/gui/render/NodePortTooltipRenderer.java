@@ -8,6 +8,7 @@ import com.gtceu.calcboard.api.storage.BoardManager;
 import com.gtceu.calcboard.client.gui.BoardScreen;
 import com.gtceu.calcboard.client.gui.util.FormatUtil;
 import com.gtceu.calcboard.client.gui.widget.NodeWidget;
+import com.gtceu.calcboard.compat.gtceu.physics.GTPowerCalculator;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -175,9 +176,9 @@ public final class NodePortTooltipRenderer {
 
         String chanceLabel = Component.translatable("gui.gtcalcboard.chance").getString().replace("%s%%", "").replace(":", "").trim();
         if (effChance <= 0.0) {
-            if (node != null && node.getSteamMode().isSteam()) {
+            if (node != null && node.getSteamMode() != null && node.getSteamMode().isSteam()) {
                 tooltipLines.add(Component.literal("§c⚠ " + chanceLabel + ": 0% (Steam Mode: No Byproducts)"));
-            } else if (node != null && ResourceLocation.tryParse("gtceu:macerator").equals(node.getRecipeCategoryId())) {
+            } else if (node != null && GTPowerCalculator.isMaceratorNode(node)) {
                 var reqTier = (node.getRecipeTier() != null && node.getRecipeTier().ordinal() > com.gtceu.calcboard.api.type.GTVoltageTier.HV.ordinal())
                         ? node.getRecipeTier()
                         : com.gtceu.calcboard.api.type.GTVoltageTier.HV;

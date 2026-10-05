@@ -78,7 +78,7 @@ class ExhaustiveTraitReversibilityTest {
                 targetMachine = pyrolyse;
             } else if ("gtceu:batch_mode".equals(addon.getId()) || "gtceu:batch_processing".equals(addon.getId())) {
                 targetMachine = lcr;
-            } else if ("gtceu:bulk_processing".equals(addon.getId())) {
+            } else if (addon.getId().startsWith("gtceu:bulk_processing")) {
                 targetMachine = ultimateAbs;
             } else if ("gtceu:overpressure_autoclave".equals(addon.getId())) {
                 targetMachine = largeAutoclave;

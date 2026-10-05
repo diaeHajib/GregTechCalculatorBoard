@@ -186,6 +186,9 @@ public class DeletePageConfirmDialog implements IBoardModal {
         if (isTeamPage && targetPageId != null) {
             UUID teamId = com.gtceu.calcboard.client.team.ClientWorkspaceState.getInstance().getCurrentTeamId();
             com.gtceu.calcboard.network.NetworkHandler.sendToServer(new com.gtceu.calcboard.network.packet.c2s.C2SDeleteTeamPagePacket(teamId, targetPageId));
+            if (parent.getPageBrowserDrawer() != null) {
+                parent.getPageBrowserDrawer().onPageDeleted(targetPageId);
+            }
         } else if (targetMultiplePageIds != null && !targetMultiplePageIds.isEmpty()) {
             for (String pid : targetMultiplePageIds) {
                 BoardManager.getInstance().removePage(pid);
@@ -194,10 +197,18 @@ public class DeletePageConfirmDialog implements IBoardModal {
             int activeIdx = Math.max(0, Math.min(BoardManager.getInstance().getActivePageIndex(), BoardManager.getInstance().getPages().size() - 1));
             BoardManager.getInstance().switchPage(activeIdx);
             syncCameraToActivePage();
+            if (parent.getPageBrowserDrawer() != null) {
+                parent.getPageBrowserDrawer().onMultiplePagesDeleted(targetMultiplePageIds);
+            }
             parent.rebuildWidgets();
         } else if (targetPageIndex >= 0) {
+            List<com.gtceu.calcboard.api.storage.BoardPage> pages = BoardManager.getInstance().getPages();
+            String removedId = (targetPageIndex < pages.size()) ? pages.get(targetPageIndex).getId() : null;
             BoardManager.getInstance().removePage(targetPageIndex);
             syncCameraToActivePage();
+            if (removedId != null && parent.getPageBrowserDrawer() != null) {
+                parent.getPageBrowserDrawer().onPageDeleted(removedId);
+            }
             parent.rebuildWidgets();
         }
         close();
