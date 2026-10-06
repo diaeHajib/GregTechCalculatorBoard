@@ -49,6 +49,14 @@ public class MachineNodeRole implements INodeRole {
     private OverclockMode overclockMode = OverclockMode.STANDARD;
     private boolean isGenerator = false;
     private double efficiency = 1.0;
+    /**
+     * Largest efficiency downstream demand allows: acceptedRate / nominalProduction of the tightest
+     * output port. 1.0 means nothing constrains this machine's outputs. Derived state, written by
+     * {@code FixedPointEfficiencySolver} only when the board is solved in SUPPLY_AND_DEMAND mode.
+     */
+    private double blockingRatio = 1.0;
+    /** Display name of the resource backing up, or null when nothing does. Derived, not persisted. */
+    private String blockingResource;
     private EnergyType energyType = null;
     private boolean isMultiblock = false;
     private final List<MachineAddon> addons = new ArrayList<>();
@@ -289,6 +297,25 @@ public class MachineNodeRole implements INodeRole {
 
     public void setEfficiency(double efficiency) {
         this.efficiency = Math.max(0.0, Math.min(1.0, efficiency));
+    }
+
+    public double getBlockingRatio() {
+        return blockingRatio;
+    }
+
+    public String getBlockingResource() {
+        return blockingResource;
+    }
+
+    /**
+     * Records the downstream-demand ceiling measured by the solver, for display.
+     *
+     * @param blockingRatio    acceptedRate / nominalProduction of the tightest output port, clamped to [0, 1]
+     * @param blockingResource resource backing up, or null to clear
+     */
+    public void setBlockingInfo(double blockingRatio, String blockingResource) {
+        this.blockingRatio = Math.max(0.0, Math.min(1.0, blockingRatio));
+        this.blockingResource = blockingResource != null && !blockingResource.isEmpty() ? blockingResource : null;
     }
 
     public EnergyType getEnergyType() {
@@ -650,7 +677,17 @@ public class MachineNodeRole implements INodeRole {
             outRates.put(i, owner.getOutputSlotRate(i, true));
             effOutChances.put(i, owner.getEffectiveOutputChance(i));
         }
-        boolean isStarved = effCps < nomCps * 0.999 && op;
+        // A throttled machine is either starved (its feed limits it) or blocked (its consumers limit
+        // it). downstream demand is the binding constraint when the achieved efficiency has been
+        // pulled down to the acceptance ceiling. In SUPPLY_ONLY mode blockingRatio is always 1.0, so
+        // isBlocked stays false and isStarved keeps its historical meaning exactly.
+        boolean throttled = effCps < nomCps * 0.999 && op;
+        double blockRatio = getBlockingRatio();
+        String blockResource = getBlockingResource();
+        boolean isBlocked = throttled
+                && blockRatio < 1.0 - 1e-4
+                && efficiency <= blockRatio + 1e-3;
+        boolean isStarved = throttled && !isBlocked;
         return new NodeCalculationSnapshot(
             owner.getId(),
             NodeRoleType.MACHINE,
@@ -664,6 +701,9 @@ public class MachineNodeRole implements INodeRole {
             et,
             op,
             isStarved,
+            isBlocked,
+            blockRatio,
+            blockResource != null ? blockResource : "",
             warnings != null ? List.copyOf(warnings) : List.of(),
             inRates,
             outRates,

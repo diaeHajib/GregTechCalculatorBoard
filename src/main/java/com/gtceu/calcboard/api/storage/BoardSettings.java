@@ -6,6 +6,8 @@ import com.gtceu.calcboard.api.type.PowerDisplayMode;
 import com.gtceu.calcboard.api.type.RateTimeUnit;
 import com.gtceu.calcboard.api.type.ToolbarDisplayMode;
 import com.gtceu.calcboard.api.type.WireAnimationMode;
+import com.gtceu.calcboard.api.type.LineSolveMode;
+import com.gtceu.calcboard.api.type.LineSolveModeHolder;
 import com.gtceu.calcboard.api.type.WireColorPreset;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -39,6 +41,12 @@ public class BoardSettings {
     private boolean showMultiblockBomButton = true;
     private boolean showHotkeyHud = true;
     private WireAnimationMode wireAnimationMode = WireAnimationMode.RATE_MODULATED;
+    /**
+     * Opt-in solver model for this board. SUPPLY_ONLY keeps the historical numbers; SUPPLY_AND_DEMAND
+     * additionally throttles producers by the appetite of their downstream consumers, so a blocked
+     * line reports the throughput it can really achieve instead of every machine at 100%.
+     */
+    private LineSolveMode lineSolveMode = LineSolveMode.SUPPLY_ONLY;
     private WireColorPreset wireColorPreset = WireColorPreset.CYAN;
     private WireColorPreset matchedWireColorPreset = WireColorPreset.GREEN;
     private int maxHarmonizeScale = 16;
@@ -70,6 +78,8 @@ public class BoardSettings {
         this.showMultiblockBomButton = true;
         this.showHotkeyHud = true;
         this.wireAnimationMode = WireAnimationMode.RATE_MODULATED;
+        this.lineSolveMode = LineSolveMode.SUPPLY_ONLY;
+        LineSolveModeHolder.set(LineSolveMode.SUPPLY_ONLY);
         this.wireColorPreset = WireColorPreset.CYAN;
         this.matchedWireColorPreset = WireColorPreset.GREEN;
         this.maxHarmonizeScale = 16;
@@ -103,6 +113,7 @@ public class BoardSettings {
         tag.putBoolean("showMultiblockBomButton", showMultiblockBomButton);
         tag.putBoolean("showHotkeyHud", showHotkeyHud);
         tag.putString("wireAnimationMode", getWireAnimationMode().name());
+        tag.putString("lineSolveMode", getLineSolveMode().name());
         tag.putString("wireColorPreset", getWireColorPreset().name());
         tag.putString("matchedWireColorPreset", getMatchedWireColorPreset().name());
         tag.putInt("maxHarmonizeScale", maxHarmonizeScale);
@@ -192,6 +203,13 @@ public class BoardSettings {
         } else if (rootTag.contains("showWirePulseAnimation")) {
             this.wireAnimationMode = rootTag.getBoolean("showWirePulseAnimation") ? WireAnimationMode.RATE_MODULATED : WireAnimationMode.DISABLED;
         }
+        if (rootTag.contains("lineSolveMode")) {
+            try {
+                this.lineSolveMode = LineSolveMode.valueOf(rootTag.getString("lineSolveMode"));
+            } catch (Exception ignored) {}
+        }
+        // Publish as soon as a board's settings are known, so the next solve uses this board's model.
+        LineSolveModeHolder.set(getLineSolveMode());
         if (rootTag.contains("wireColorPreset")) {
             try {
                 this.wireColorPreset = WireColorPreset.valueOf(rootTag.getString("wireColorPreset"));
@@ -414,6 +432,31 @@ public class BoardSettings {
 
     public void cycleWireAnimationMode() {
         this.wireAnimationMode = getWireAnimationMode().next();
+    }
+
+    /**
+     * @return this board's solver model; never null
+     */
+    public LineSolveMode getLineSolveMode() {
+        return lineSolveMode != null ? lineSolveMode : LineSolveMode.SUPPLY_ONLY;
+    }
+
+    /**
+     * Sets this board's solver model and publishes it to the solver.
+     */
+    public void setLineSolveMode(LineSolveMode lineSolveMode) {
+        this.lineSolveMode = lineSolveMode != null ? lineSolveMode : LineSolveMode.SUPPLY_ONLY;
+        LineSolveModeHolder.set(this.lineSolveMode);
+    }
+
+    /**
+     * Advances to the next solver model, for a single-button settings control.
+     *
+     * @return the newly active mode
+     */
+    public LineSolveMode cycleLineSolveMode() {
+        setLineSolveMode(getLineSolveMode().next());
+        return getLineSolveMode();
     }
 
     public boolean isShowWirePulseAnimation() {

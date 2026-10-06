@@ -62,6 +62,7 @@ public class NodeCardTextCache {
     private final List<Row2Button> row2Buttons = new ArrayList<>();
     private List<NodeBadge> badges = List.of();
     private boolean starved = false;
+    private boolean blocked = false;
 
     public boolean isDirty() {
         return dirty;
@@ -69,6 +70,14 @@ public class NodeCardTextCache {
 
     public boolean isStarved() {
         return starved;
+    }
+
+    /**
+     * @return true when the solver reported this node as held back by what its consumers can absorb,
+     *         rather than by a lack of input. Only ever true in the opt-in supply+demand solve mode.
+     */
+    public boolean isBlocked() {
+        return blocked;
     }
 
     public void markDirty() {
@@ -138,8 +147,10 @@ public class NodeCardTextCache {
     }
 
     private void updateStarved(FlowGraph graph, RecipeNode node, NodeCalculationSnapshot snapshot) {
+        this.blocked = false;
         if (snapshot != null && snapshot != NodeCalculationSnapshot.EMPTY) {
             this.starved = snapshot.isStarved();
+            this.blocked = snapshot.isBlocked();
             return;
         }
         if (graph == null || node == null) {
@@ -340,7 +351,7 @@ public class NodeCardTextCache {
         boolean isConnected = stats != null && stats.isConnected();
         boolean isBalanced = stats != null && stats.isBalanced();
         boolean isDeficit = stats != null && stats.isInputDeficit();
-        boolean isThrottled = stats != null && stats.isUpstreamThrottled();
+        boolean isThrottled = stats != null && (stats.isUpstreamThrottled() || stats.isDemandThrottled());
         boolean isBuffered = graph != null && graph.findConnectedBufferNode(node, inOrigIdx) != null;
         boolean isSteadyRecirc = stats != null && stats.isSteadyStateRecirculating();
 

@@ -1,5 +1,7 @@
 package com.gtceu.calcboard.api.storage;
 
+import com.gtceu.calcboard.api.type.LineSolveMode;
+
 import com.gtceu.calcboard.api.model.FlowGraph;
 import com.gtceu.calcboard.api.type.BoardGuiScale;
 import com.gtceu.calcboard.api.type.FluidUnitMode;
@@ -193,6 +195,10 @@ public class BoardManager {
     public WireAnimationMode getWireAnimationMode() { return settings.getWireAnimationMode(); }
     public void setWireAnimationMode(WireAnimationMode mode) { settings.setWireAnimationMode(mode); }
     public void cycleWireAnimationMode() { settings.cycleWireAnimationMode(); }
+
+    public LineSolveMode getLineSolveMode() { return settings.getLineSolveMode(); }
+    public void setLineSolveMode(LineSolveMode mode) { settings.setLineSolveMode(mode); }
+    public LineSolveMode cycleLineSolveMode() { return settings.cycleLineSolveMode(); }
 
     public boolean isShowWirePulseAnimation() { return settings.isShowWirePulseAnimation(); }
     public void setShowWirePulseAnimation(boolean show) { settings.setShowWirePulseAnimation(show); }

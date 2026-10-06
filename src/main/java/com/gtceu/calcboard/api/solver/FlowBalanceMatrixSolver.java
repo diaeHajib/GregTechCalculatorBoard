@@ -1,5 +1,7 @@
 package com.gtceu.calcboard.api.solver;
 
+import com.gtceu.calcboard.api.type.LineSolveModeHolder;
+
 import com.gtceu.calcboard.api.model.CanvasGroupFrame;
 import com.gtceu.calcboard.api.model.FlowGraph;
 import com.gtceu.calcboard.api.model.RecipeNode;
@@ -290,7 +292,9 @@ public final class FlowBalanceMatrixSolver {
     }
 
     public static Map<String, Double> computeNodeEfficiencies(FlowGraph graph) {
-        return FixedPointEfficiencySolver.computeNodeEfficiencies(graph);
+        // Honour the board's active solver model. The holder defaults to SUPPLY_ONLY, so every existing
+        // caller keeps the historical numbers until a board opts into SUPPLY_AND_DEMAND.
+        return FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveModeHolder.get());
     }
 
     public static void optimizeMaxThroughput(FlowGraph graph, boolean preferParallels, boolean integerCounts) {

@@ -32,22 +32,28 @@ public final class FlowGraphSolver {
         double externalSupplyRate,
         double loopSupplyRate,
         double recirculationRatio,
-        boolean isUnfedDampedLoop
+        boolean isUnfedDampedLoop,
+        /**
+         * True when the <em>only</em> reason this port does not see its nominal flow is that the
+         * machine itself is throttled by what its consumers can absorb. The feed is not short - the
+         * machine simply does not want the rest at its current speed. Never set in SUPPLY_ONLY mode.
+         */
+        boolean isDemandThrottled
     ) {
         public PortFlowStats(double requiredOrProducedRate, double connectedRate, int connectionCount, boolean isConnected) {
-            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, requiredOrProducedRate, false, false, 0.0, 0.0, 0.0, false);
+            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, requiredOrProducedRate, false, false, 0.0, 0.0, 0.0, false, false);
         }
 
         public PortFlowStats(double requiredOrProducedRate, double connectedRate, int connectionCount, boolean isConnected, double effectiveRate, boolean isUpstreamThrottled) {
-            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, false, 0.0, 0.0, 0.0, false);
+            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, false, 0.0, 0.0, 0.0, false, false);
         }
 
         public PortFlowStats(double requiredOrProducedRate, double connectedRate, int connectionCount, boolean isConnected, double effectiveRate, boolean isUpstreamThrottled, boolean isSteadyStateRecirculating) {
-            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, isSteadyStateRecirculating, 0.0, 0.0, 0.0, false);
+            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, isSteadyStateRecirculating, 0.0, 0.0, 0.0, false, false);
         }
 
         public PortFlowStats(double requiredOrProducedRate, double connectedRate, int connectionCount, boolean isConnected, double effectiveRate, boolean isUpstreamThrottled, boolean isSteadyStateRecirculating, double externalSupplyRate, double loopSupplyRate, double recirculationRatio) {
-            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, isSteadyStateRecirculating, externalSupplyRate, loopSupplyRate, recirculationRatio, false);
+            this(requiredOrProducedRate, connectedRate, connectionCount, isConnected, effectiveRate, isUpstreamThrottled, isSteadyStateRecirculating, externalSupplyRate, loopSupplyRate, recirculationRatio, false, false);
         }
 
         public double getRatio() {
@@ -69,6 +75,12 @@ public final class FlowGraphSolver {
 
         public boolean isInputDeficit() {
             if (!isConnected || isSteadyStateRecirculating) return false;
+            // A machine throttled by what its consumers can absorb is not short of anything - it is
+            // drawing exactly what it wants at its current speed. Measuring that against the
+            // *nominal* draw flagged every non-anchor machine in a supply+demand solve, including
+            // ones fed from an infinite source, which can never run short. Nominal stays the
+            // yardstick only when the feed itself is the limit.
+            if (isDemandThrottled) return false;
             double effectiveReq = effectiveRate > 0.0001 ? effectiveRate : requiredOrProducedRate;
             return connectedRate < requiredOrProducedRate - 0.001 && connectedRate <= effectiveReq + 0.001;
         }

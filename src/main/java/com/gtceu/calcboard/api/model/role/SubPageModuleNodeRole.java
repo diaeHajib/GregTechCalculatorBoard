@@ -32,6 +32,13 @@ public class SubPageModuleNodeRole implements INodeRole {
     private int containedMachineCount = 0;
     private double scaleMultiplier = 1.0;
     private double efficiency = 1.0;
+    /**
+     * Largest efficiency downstream demand allows for this sub-page module. 1.0 when nothing
+     * constrains its output. Derived state, written only in SUPPLY_AND_DEMAND mode.
+     */
+    private double blockingRatio = 1.0;
+    /** Display name of the resource backing up, or null when nothing does. Derived, not persisted. */
+    private String blockingResource;
     private double baseEUt = 0.0;
     private double baseDurationTicks = 20.0;
     private com.gtceu.calcboard.api.type.GTVoltageTier targetTier = com.gtceu.calcboard.api.type.GTVoltageTier.LV;
@@ -174,6 +181,25 @@ public class SubPageModuleNodeRole implements INodeRole {
 
     public void setEfficiency(double efficiency) {
         this.efficiency = Math.max(0.0, Math.min(1.0, efficiency));
+    }
+
+    public double getBlockingRatio() {
+        return blockingRatio;
+    }
+
+    public String getBlockingResource() {
+        return blockingResource;
+    }
+
+    /**
+     * Records the downstream-demand ceiling measured by the solver, for display.
+     *
+     * @param blockingRatio    acceptedRate / nominalProduction of the tightest output port, clamped to [0, 1]
+     * @param blockingResource resource backing up, or null to clear
+     */
+    public void setBlockingInfo(double blockingRatio, String blockingResource) {
+        this.blockingRatio = Math.max(0.0, Math.min(1.0, blockingRatio));
+        this.blockingResource = blockingResource != null && !blockingResource.isEmpty() ? blockingResource : null;
     }
 
     public com.gtceu.calcboard.api.type.GTVoltageTier getTargetTier() {
@@ -325,7 +351,13 @@ public class SubPageModuleNodeRole implements INodeRole {
             outRates.put(i, owner.getOutputSlotRate(i, true));
             effOutChances.put(i, owner.getEffectiveOutputChance(i));
         }
-        boolean isStarved = effCps < cps * 0.999 && op;
+        boolean throttled = effCps < cps * 0.999 && op;
+        double blockRatio = getBlockingRatio();
+        String blockResource = getBlockingResource();
+        boolean isBlocked = throttled
+                && blockRatio < 1.0 - 1e-4
+                && owner.getEfficiency() <= blockRatio + 1e-3;
+        boolean isStarved = throttled && !isBlocked;
         return new NodeCalculationSnapshot(
             owner.getId(),
             NodeRoleType.MODULE,
@@ -339,6 +371,9 @@ public class SubPageModuleNodeRole implements INodeRole {
             getEnergyType(),
             op,
             isStarved,
+            isBlocked,
+            blockRatio,
+            blockResource != null ? blockResource : "",
             warnings != null ? List.copyOf(warnings) : List.of(),
             inRates,
             outRates,

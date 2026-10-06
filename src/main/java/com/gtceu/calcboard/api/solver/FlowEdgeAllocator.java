@@ -311,6 +311,15 @@ public final class FlowEdgeAllocator {
             return extraDemands.get(edge);
         }
         if (graph == null) return 0.0;
+        // NOTE: weighting this by DownstreamBlockingSolver.edgeAppetite() (the capacity-anchored figure)
+        // fixes the split between consumers of a shared producer - see SharedProducerAppetiteTest - but
+        // it must not be done naively here. Two problems, both measured:
+        //   1. edgeAppetite() resolves a consumer's acceptance ceiling recursively, and this method runs
+        //      per edge per allocation, so large graphs blow up (FlowSolverPropertyBasedFuzzTest timed
+        //      out at 15 s on the 50-100 node cases). It needs a per-solve memoization of the ceilings.
+        //   2. the same demandMap drives proportional scaling, so anchoring it also moves auto-ratio
+        //      results (SteamOreFactoryRegressionTest). The split weight and the scaling demand have to
+        //      be separated before this can change.
         RecipeNode consumer = graph.findNodeById(edge.toNodeId());
         return getConnectedConsumerDemand(graph, consumer, edge.inputIndex(), effMap, context);
     }

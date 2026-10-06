@@ -22,6 +22,9 @@ public record NodeCalculationSnapshot(
     EnergyType energyType,
     boolean isOperational,
     boolean isStarved,
+    boolean isBlocked,
+    double blockingRatio,
+    String blockingResource,
     List<Component> operationalWarnings,
     Map<Integer, Double> inputPortRates,
     Map<Integer, Double> outputPortRates,
@@ -30,11 +33,12 @@ public record NodeCalculationSnapshot(
 ) {
     public static final NodeCalculationSnapshot EMPTY = new NodeCalculationSnapshot(
         "", NodeRoleType.MACHINE, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1,
-        EnergyType.ELECTRIC_EU, true, false, List.of(),
+        EnergyType.ELECTRIC_EU, true, false, false, 1.0, "", List.of(),
         Map.of(), Map.of(), Map.of(), Map.of()
     );
 
     public NodeCalculationSnapshot {
+        blockingResource = blockingResource != null ? blockingResource : "";
         operationalWarnings = operationalWarnings != null ? List.copyOf(operationalWarnings) : List.of();
         inputPortRates = inputPortRates != null ? Map.copyOf(inputPortRates) : Map.of();
         outputPortRates = outputPortRates != null ? Map.copyOf(outputPortRates) : Map.of();

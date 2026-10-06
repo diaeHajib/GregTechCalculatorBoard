@@ -413,7 +413,7 @@ public class JunctionNodeRole implements INodeRole {
             owner.getId(),
             NodeRoleType.JUNCTION,
             1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1,
-            EnergyType.NONE, true, false, List.of(),
+            EnergyType.NONE, true, false, false, 1.0, "", List.of(),
             inRates, outRates, Map.of(), Map.of()
         );
     }

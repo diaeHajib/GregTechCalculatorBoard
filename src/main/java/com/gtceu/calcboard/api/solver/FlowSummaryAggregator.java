@@ -63,6 +63,23 @@ public final class FlowSummaryAggregator {
         double effectiveRate = Math.min(effectiveReq, totalSupplied);
         boolean isUpstreamThrottled = isConnected && (effectiveReq < nominalReq - 0.001) && (totalSupplied > effectiveReq + 0.001);
 
+        // Demand-caused throttling: this machine is held back by what its consumers can absorb, not
+        // by what reaches its feeds. Deliberately mirrors the test MachineNodeRole uses for the card
+        // outline (throttled AND at the acceptance ceiling) so the port rows and the outline can
+        // never disagree about why a machine is running slow.
+        //
+        // The gate is the node's own blocking ratio rather than LineSolveModeHolder: that holder is a
+        // process-wide static that any board-settings reset can drop back to SUPPLY_ONLY, and port
+        // stats are queried from paths (HUD, badges, wire renderer, inspector) that do not
+        // necessarily follow the board being displayed. A ratio below 1 is direct evidence that the
+        // graph was solved blocking-aware, because the supply-only solve clears it to exactly 1.0.
+        double blockRatio = node.getBlockingRatio();
+        boolean isDemandThrottled = isConnected
+                && !node.isReroute()
+                && totalSupplied < nominalReq - 0.001
+                && blockRatio < 1.0 - 1e-4
+                && node.getEfficiency() <= blockRatio + 1e-3;
+
         FixedPointEfficiencySolver.PrecomputedDampedLoopMeta dampedMeta = (!node.isReroute())
                 ? FixedPointEfficiencySolver.findDampedLoopMeta(graph, node, inputIndex)
                 : null;
@@ -108,7 +125,8 @@ public final class FlowSummaryAggregator {
                 externalSupplyRate,
                 loopSupplyRate,
                 recirculationRatio,
-                isUnfedDampedLoop
+                isUnfedDampedLoop,
+                isDemandThrottled
         );
     }
 

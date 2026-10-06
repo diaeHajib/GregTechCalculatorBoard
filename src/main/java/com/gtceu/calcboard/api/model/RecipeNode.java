@@ -45,6 +45,11 @@ public class RecipeNode {
 
     private RecipeSpec baseSpec;
     private transient boolean portsDirty = true;
+    /** Set by {@link com.gtceu.calcboard.api.solver.LineBottleneckAnalyzer} on the machine whose
+     *  expansion buys the most line output. Solve state only - never serialized. */
+    private transient boolean bottleneck = false;
+    /** Median relative gain that earned {@link #bottleneck}, for display. 0 when not the bottleneck. */
+    private transient double bottleneckGain = 0.0;
     private transient List<ProjectedPort> projectedInputs = Collections.emptyList();
     private transient List<ProjectedPort> projectedOutputs = Collections.emptyList();
 
@@ -473,6 +478,80 @@ public class RecipeNode {
         } else if (isModule()) {
             asModule().setEfficiency(efficiency);
         }
+    }
+
+    /**
+     * @return true when the last solve found this machine the single best thing to build next: the
+     *         one whose machine count, increased by one, buys the most line output. Measured, not
+     *         inferred - it is not necessarily the fastest machine, the most used one, or the one
+     *         being held up. Rendered with the highest-priority outline.
+     */
+    public boolean isBottleneck() {
+        return bottleneck;
+    }
+
+    /**
+     * @param bottleneck whether this machine is currently the best thing to build
+     */
+    public void setBottleneck(boolean bottleneck) {
+        this.bottleneck = bottleneck;
+    }
+
+    /**
+     * @return the median relative gain across the line's exported products from adding one more of
+     *         this machine, e.g. 0.16 for "+16%". Zero unless {@link #isBottleneck()}.
+     */
+    public double getBottleneckGain() {
+        return bottleneckGain;
+    }
+
+    /**
+     * @param bottleneckGain gain that earned the bottleneck flag; null-safe, non-finite becomes 0
+     */
+    public void setBottleneckGain(double bottleneckGain) {
+        this.bottleneckGain = Double.isFinite(bottleneckGain) ? bottleneckGain : 0.0;
+    }
+
+    /**
+     * Records how far downstream demand lets this node run, so the renderer can distinguish a
+     * machine that is starved from one that is blocked. Called with {@code (1.0, null)} to clear.
+     *
+     * @param blockingRatio    acceptedRate / nominalProduction of the tightest output port, in [0, 1]
+     * @param blockingResource resource backing up, or null
+     */
+    public void setBlockingInfo(double blockingRatio, String blockingResource) {
+        if (isMachine()) {
+            asMachine().setBlockingInfo(blockingRatio, blockingResource);
+        } else if (isModule()) {
+            asModule().setBlockingInfo(blockingRatio, blockingResource);
+        }
+    }
+
+    /**
+     * @return the downstream-demand ceiling measured by the solver; 1.0 when unconstrained or not
+     *         measured (junction nodes, or boards solved in SUPPLY_ONLY mode)
+     */
+    public double getBlockingRatio() {
+        if (isMachine()) {
+            return asMachine().getBlockingRatio();
+        }
+        if (isModule()) {
+            return asModule().getBlockingRatio();
+        }
+        return 1.0;
+    }
+
+    /**
+     * @return the resource backing this node's output up, or null when nothing does
+     */
+    public String getBlockingResource() {
+        if (isMachine()) {
+            return asMachine().getBlockingResource();
+        }
+        if (isModule()) {
+            return asModule().getBlockingResource();
+        }
+        return null;
     }
 
     public boolean isReroute() {

@@ -151,8 +151,18 @@ public class NodeCardRenderer {
         }
 
         boolean isStarved = false;
+        boolean isBlocked = false;
+        // The machine capping the line outranks every other card state, by design: if a card is the
+        // current bottleneck it has to read as the bottleneck and nothing else. Selection still gets
+        // its own ring drawn on top in renderCardOutlineLayers, so the click target stays visible.
+        boolean isBottleneck = node.isBottleneck();
         int outlineColor;
-        if (isSelected) {
+        if (isBottleneck) {
+            float pulse = (float) (0.62 + 0.38 * Math.sin(System.currentTimeMillis() / 220.0));
+            int red = (int) (150 + 32 * pulse);
+            int green = (int) (222 + 33 * pulse);
+            outlineColor = 0xFF000000 | (red << 16) | (green << 8) | 0x00;
+        } else if (isSelected) {
             outlineColor = 0xFF00FFFF;
         } else if (!isOperational) {
             float pulse = (float) (0.60 + 0.40 * Math.sin(System.currentTimeMillis() / 200.0));
@@ -163,6 +173,14 @@ public class NodeCardRenderer {
             int red = (int) (245 * pulse);
             int green = (int) (158 * pulse);
             outlineColor = 0xFF000000 | (red << 16) | (green << 8) | 0x0B;
+        } else if (BoardManager.getInstance().getWireAnimationMode() == WireAnimationMode.RATE_MODULATED && (isBlocked = textCache.isBlocked())) {
+            // Blocked reads magenta, deliberately distinct from the amber "starved" pulse so the two
+            // possible causes of a throttled machine are never confused on screen.
+            float pulse = (float) (0.65 + 0.35 * Math.sin(System.currentTimeMillis() / 240.0));
+            int red = (int) (236 * pulse);
+            int green = (int) (72 * pulse);
+            int blue = (int) (153 * pulse);
+            outlineColor = 0xFF000000 | (red << 16) | (green << 8) | blue;
         } else if (node.isModule()) {
             outlineColor = 0xFF9955FF;
         } else if (node.isFusion()) {
@@ -175,17 +193,25 @@ public class NodeCardRenderer {
             outlineColor = 0xFF3D4455;
         }
         graphics.renderOutline(x, y, cardW, height, outlineColor);
-        renderCardOutlineLayers(graphics, node, x, y, cardW, height, isOperational, isSelected, isStarved, outlineColor);
+        renderCardOutlineLayers(graphics, node, x, y, cardW, height, isOperational, isSelected, isStarved, isBlocked, isBottleneck, outlineColor);
     }
 
-    private static void renderCardOutlineLayers(GuiGraphics graphics, RecipeNode node, int x, int y, int cardW, int height, boolean isOperational, boolean isSelected, boolean isStarved, int outlineColor) {
-        if (isSelected) {
+    private static void renderCardOutlineLayers(GuiGraphics graphics, RecipeNode node, int x, int y, int cardW, int height, boolean isOperational, boolean isSelected, boolean isStarved, boolean isBlocked, boolean isBottleneck, int outlineColor) {
+        if (isBottleneck) {
+            graphics.renderOutline(x - 1, y - 1, cardW + 2, height + 2, 0x99B6FF00);
+            graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x99B6FF00);
+            if (isSelected) {
+                graphics.renderOutline(x - 2, y - 2, cardW + 4, height + 4, 0x8800FFFF);
+            }
+        } else if (isSelected) {
             graphics.renderOutline(x - 1, y - 1, cardW + 2, height + 2, 0x8800FFFF);
             graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x8800FFFF);
         } else if (!isOperational) {
             graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, (outlineColor & 0x00FFFFFF) | 0x88000000);
         } else if (isStarved) {
             graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x66F59E0B);
+        } else if (isBlocked) {
+            graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x66EC4899);
         } else if (node.isModule()) {
             graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x559955FF);
         } else if (node.isFusion()) {

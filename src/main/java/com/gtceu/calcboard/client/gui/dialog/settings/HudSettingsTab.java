@@ -48,6 +48,13 @@ public class HudSettingsTab extends AbstractSettingsTab {
                 bm.isShowWirePulseAnimation());
         rowY += rowH + 2;
 
+        String solveModeLabel = Component.translatable("gui.gtcalcboard.settings.solve_mode").getString()
+                + ": §e" + Component.translatable(bm.getLineSolveMode().getTranslationKey()).getString();
+        drawCheckbox(graphics, font, x, rowY, w, rowH, mouseX, mouseY,
+                solveModeLabel,
+                bm.getLineSolveMode().isBlockingAware());
+        rowY += rowH + 2;
+
         drawCheckbox(graphics, font, x, rowY, w, rowH, mouseX, mouseY,
                 Component.translatable("gui.gtcalcboard.settings.collapse_summary").getString(),
                 bm.isSummaryOverlayCollapsed());
@@ -102,6 +109,13 @@ public class HudSettingsTab extends AbstractSettingsTab {
 
         if (isInsideRow(mouseX, mouseY, x, rowY, w, rowH)) {
             bm.cycleWireAnimationMode();
+            onSettingsChanged();
+            return true;
+        }
+        rowY += rowH + 2;
+
+        if (isInsideRow(mouseX, mouseY, x, rowY, w, rowH)) {
+            bm.cycleLineSolveMode();
             onSettingsChanged();
             return true;
         }
