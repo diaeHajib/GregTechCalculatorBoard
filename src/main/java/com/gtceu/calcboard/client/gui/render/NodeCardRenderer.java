@@ -197,6 +197,9 @@ public class NodeCardRenderer {
     }
 
     private static void renderCardOutlineLayers(GuiGraphics graphics, RecipeNode node, int x, int y, int cardW, int height, boolean isOperational, boolean isSelected, boolean isStarved, boolean isBlocked, boolean isBottleneck, int outlineColor) {
+        if (node.getParentGraph() != null && node.getParentGraph().getRecommendationTargetIds().contains(node.getId())) {
+            graphics.renderOutline(x - 3, y - 3, cardW + 6, height + 6, 0xFFC084FC);
+        }
         if (isBottleneck) {
             graphics.renderOutline(x - 1, y - 1, cardW + 2, height + 2, 0x99B6FF00);
             graphics.renderOutline(x + 1, y + 1, cardW - 2, height - 2, 0x99B6FF00);
@@ -1181,7 +1184,6 @@ public class NodeCardRenderer {
     }
 
 }
-
 
 
 

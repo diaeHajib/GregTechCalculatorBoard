@@ -41,6 +41,16 @@ public class FlowGraph {
     private Map<String, Double> primedDrainRates = Map.of();
     private Map<String, Double> primedExportRates = Map.of();
     private Map<ConnectionEdge, Double> primedVirtualFlows = Map.of();
+    private Set<String> recommendationTargetIds = Set.of();
+
+    public Set<String> getRecommendationTargetIds() {
+        return recommendationTargetIds;
+    }
+
+    public void setRecommendationTargetIds(Set<String> nodeIds) {
+        recommendationTargetIds = Collections.unmodifiableSet(new TreeSet<>(nodeIds));
+        markSummaryDirty();
+    }
 
     public boolean isPrimedSolve() {
         return solvedMode == LineSolveMode.PRIMED;
@@ -524,6 +534,7 @@ public class FlowGraph {
         frames.clear();
         stickyNotes.clear();
         nodeMap.clear();
+        recommendationTargetIds = Set.of();
         invalidatePortStatsCache();
     }
 
@@ -713,6 +724,7 @@ public class FlowGraph {
             for (CanvasStickyNote sn : other.stickyNotes) {
                 this.stickyNotes.add(sn.copy());
             }
+            setRecommendationTargetIds(other.recommendationTargetIds);
         }
     }
 
@@ -829,6 +841,11 @@ public class FlowGraph {
         tag.putDouble("panX", panX);
         tag.putDouble("panY", panY);
         tag.putDouble("zoom", zoom);
+        if (!recommendationTargetIds.isEmpty()) {
+            ListTag targets = new ListTag();
+            recommendationTargetIds.forEach(id -> targets.add(net.minecraft.nbt.StringTag.valueOf(id)));
+            tag.put("recommendationTargets", targets);
+        }
 
         if (visitedGraphs != null) {
             visitedGraphs.add(this);
@@ -867,6 +884,10 @@ public class FlowGraph {
 
     public static FlowGraph deserializeNBT(CompoundTag tag) {
         FlowGraph graph = new FlowGraph();
+        ListTag targets = tag.getList("recommendationTargets", Tag.TAG_STRING);
+        Set<String> targetIds = new TreeSet<>();
+        for (int i = 0; i < targets.size(); i++) targetIds.add(targets.getString(i));
+        graph.setRecommendationTargetIds(targetIds);
         if (tag.contains("nodes", Tag.TAG_LIST)) {
             ListTag nodeList = tag.getList("nodes", Tag.TAG_COMPOUND);
             for (int i = 0; i < nodeList.size(); i++) {
@@ -903,6 +924,7 @@ public class FlowGraph {
             return null;
         }
         FlowGraph graph = new FlowGraph();
+        graph.setRecommendationTargetIds(recommendationTargetIds);
         for (RecipeNode n : this.nodes) {
             graph.addNode(n.copy(n.getId(), visitedGraphs, depth));
         }

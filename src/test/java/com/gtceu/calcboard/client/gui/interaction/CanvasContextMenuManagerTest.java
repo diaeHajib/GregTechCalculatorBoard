@@ -1,13 +1,69 @@
 package com.gtceu.calcboard.client.gui.interaction;
 
 import com.gtceu.calcboard.api.model.RecipeNode;
+import com.gtceu.calcboard.api.model.FlowGraph;
+import com.gtceu.calcboard.api.history.BoardCommand;
 import com.gtceu.calcboard.api.type.GTVoltageTier;
 import com.gtceu.calcboard.client.gui.BoardScreen;
 import com.gtceu.calcboard.client.gui.widget.NodeWidget;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import java.util.Set;
 
 public class CanvasContextMenuManagerTest {
+    private static final class TargetScreen extends BoardScreen {
+        final FlowGraph graph = new FlowGraph();
+        BoardCommand command;
+        boolean editable = true;
+
+        @Override public FlowGraph getGraph() { return graph; }
+        @Override public boolean ensureEditPermission() { return editable; }
+        @Override public void recordCommand(BoardCommand command) { this.command = command; }
+        @Override public void markSummaryDirty() { graph.markSummaryDirty(); }
+        @Override public void markTeamDirty() {}
+    }
+
+    private static void invoke(CanvasContextMenuManager menu, String key) {
+        menu.getItems().stream().filter(item -> key.equals(item.labelKey())).findFirst().orElseThrow().action().run();
+    }
+
+    @Test
+    void machineTargetsAreIndependentOfSelectionAndClearableWithUndo() {
+        TargetScreen screen = new TargetScreen();
+        RecipeNode node = RecipeNode.create("Target", 20, 20, GTVoltageTier.MV);
+        screen.graph.addNode(node);
+        CanvasContextMenuManager menu = new CanvasContextMenuManager(screen);
+        menu.openForNode(100, 100, new NodeWidget(node));
+        invoke(menu, "gui.gtcalcboard.menu.optimize_machines");
+        Assertions.assertEquals(Set.of(node.getId()), screen.graph.getRecommendationTargetIds());
+        screen.getSelectedNodeIds().clear();
+        Assertions.assertEquals(Set.of(node.getId()), screen.graph.getRecommendationTargetIds());
+        menu.openForCanvas(100, 100, 100, 100);
+        invoke(menu, "gui.gtcalcboard.menu.clear_optimization");
+        Assertions.assertTrue(screen.graph.getRecommendationTargetIds().isEmpty());
+        screen.command.undo(screen.graph);
+        Assertions.assertEquals(Set.of(node.getId()), screen.graph.getRecommendationTargetIds());
+    }
+
+    @Test
+    void multiSelectionTargetsMachinesOnlyAndHonorsEditPermission() {
+        TargetScreen screen = new TargetScreen();
+        RecipeNode first = RecipeNode.create("First", 20, 20, GTVoltageTier.MV);
+        RecipeNode second = RecipeNode.create("Second", 20, 20, GTVoltageTier.MV);
+        RecipeNode junction = RecipeNode.createReroute(0, 0);
+        screen.graph.addNode(first);
+        screen.graph.addNode(second);
+        screen.graph.addNode(junction);
+        screen.getSelectedNodeIds().addAll(Set.of(first.getId(), second.getId(), junction.getId()));
+        CanvasContextMenuManager menu = new CanvasContextMenuManager(screen);
+        menu.openForSelection(100, 100);
+        screen.editable = false;
+        invoke(menu, "gui.gtcalcboard.menu.optimize_machines");
+        Assertions.assertTrue(screen.graph.getRecommendationTargetIds().isEmpty());
+        screen.editable = true;
+        invoke(menu, "gui.gtcalcboard.menu.optimize_machines");
+        Assertions.assertEquals(Set.of(first.getId(), second.getId()), screen.graph.getRecommendationTargetIds());
+    }
 
     @Test
     public void testJunctionContextMenuContainsFlipAction() {

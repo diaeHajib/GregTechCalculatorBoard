@@ -37,6 +37,7 @@ public class SummaryOverlay {
     private IngredientStack hoveredStack = null;
     private double hoveredRate = 0.0;
     private boolean hoveredMachines = false;
+    private boolean hoveredTargets = false;
     private boolean hoveredPower = false;
     private boolean hoveredStress = false;
     private boolean hoveredFusion = false;
@@ -124,6 +125,7 @@ public class SummaryOverlay {
         int height = screenHeight - 74;
         hoveredStack = null;
         hoveredMachines = false;
+        hoveredTargets = false;
 
         if (collapsed) {
             int tabW = 24;
@@ -216,6 +218,15 @@ public class SummaryOverlay {
 
         // Top separator below power & machines
         int headerBottom = machinesY + 14;
+        FlowGraph graph = screen != null ? screen.getGraph() : null;
+        if (graph != null && !graph.getRecommendationTargetIds().isEmpty()) {
+            String label = Component.translatable("gui.gtcalcboard.optimization.targets",
+                    activeRecommendationTargets(graph).size()).getString();
+            graphics.drawString(font, font.plainSubstrByWidth(label, effectiveW - 16), x + 8, headerBottom, 0xFFC084FC, false);
+            hoveredTargets = mouseX >= x + 8 && mouseX <= x + effectiveW - 8
+                    && mouseY >= headerBottom && mouseY < headerBottom + 13;
+            headerBottom += 13;
+        }
         graphics.fill(x + 8, headerBottom, x + effectiveW - 8, headerBottom + 1, 0xFF353C4D);
 
         // 3. Scrollable Content Area (Raw Inputs + Net Outputs + Voided Outputs)
@@ -342,6 +353,21 @@ public class SummaryOverlay {
     }
 
     public void renderTooltips(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
+        if (hoveredTargets && screen != null && screen.getGraph() != null) {
+            FlowGraph graph = screen.getGraph();
+            List<Component> tooltip = new ArrayList<>();
+            tooltip.add(Component.translatable("gui.gtcalcboard.optimization.description"));
+            for (RecipeNode node : activeRecommendationTargets(graph)) {
+                tooltip.add(Component.literal(node.getName()));
+            }
+            RecipeNode recommendation = graph.getNodes().stream().filter(RecipeNode::isBottleneck).findFirst().orElse(null);
+            tooltip.add(recommendation == null
+                    ? Component.translatable("gui.gtcalcboard.optimization.no_gain")
+                    : Component.translatable("gui.gtcalcboard.optimization.next", recommendation.getName()));
+            tooltip.add(Component.translatable("gui.gtcalcboard.optimization.clear_hint"));
+            BoardTooltipRenderer.renderComponentTooltip(graphics, font, tooltip, mouseX, mouseY);
+            return;
+        }
         if (hoveredPower && lastSummary != null) {
             List<Component> tooltip = new ArrayList<>();
             tooltip.add(Component.literal("§6⚡ " + Component.translatable("gui.gtcalcboard.power_summary").getString()));
@@ -548,6 +574,11 @@ public class SummaryOverlay {
         }
     }
 
+    private static List<RecipeNode> activeRecommendationTargets(FlowGraph graph) {
+        return graph.getNodes().stream().filter(node -> node.isMachine()
+                && graph.getRecommendationTargetIds().contains(node.getId())).toList();
+    }
+
     private boolean updateMatchingOutputPortsVoidState(FlowGraph graph, IngredientStack stack, boolean restore) {
         boolean changed = false;
         for (RecipeNode node : graph.getNodes()) {
@@ -600,7 +631,5 @@ public class SummaryOverlay {
         return curY;
     }
 }
-
-
 
 

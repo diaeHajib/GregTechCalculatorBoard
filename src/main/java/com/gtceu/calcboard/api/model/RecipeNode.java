@@ -48,7 +48,7 @@ public class RecipeNode {
     /** Set by {@link com.gtceu.calcboard.api.solver.LineBottleneckAnalyzer} on the machine whose
      *  expansion buys the most line output. Solve state only - never serialized. */
     private transient boolean bottleneck = false;
-    /** Median relative gain that earned {@link #bottleneck}, for display. 0 when not the bottleneck. */
+    /** Recommendation score: median export gain or weakest-first target capacity gain. */
     private transient double bottleneckGain = 0.0;
     private transient List<ProjectedPort> projectedInputs = Collections.emptyList();
     private transient List<ProjectedPort> projectedOutputs = Collections.emptyList();
@@ -482,7 +482,7 @@ public class RecipeNode {
 
     /**
      * @return true when the last solve found this machine the single best thing to build next: the
-     *         one whose machine count, increased by one, buys the most line output. Measured, not
+     *         one whose machine count, increased by one, best improves the recommendation goal. Measured, not
      *         inferred - it is not necessarily the fastest machine, the most used one, or the one
      *         being held up. Rendered with the highest-priority outline.
      */
@@ -498,8 +498,8 @@ public class RecipeNode {
     }
 
     /**
-     * @return the median relative gain across the line's exported products from adding one more of
-     *         this machine, e.g. 0.16 for "+16%". Zero unless {@link #isBottleneck()}.
+     * @return the median relative export gain, or the first improved weakest-first target fraction
+     *         (normalized to baseline capacity). Zero unless {@link #isBottleneck()}.
      */
     public double getBottleneckGain() {
         return bottleneckGain;
