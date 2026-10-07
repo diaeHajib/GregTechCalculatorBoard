@@ -1,6 +1,7 @@
 package com.gtceu.calcboard.client.gui.interaction;
 
 import com.gtceu.calcboard.api.history.BoardCommand;
+import com.gtceu.calcboard.api.history.command.RecommendationTargetsCommand;
 import com.gtceu.calcboard.api.model.FlowGraph;
 import com.gtceu.calcboard.api.model.IngredientStack;
 import com.gtceu.calcboard.api.model.RecipeNode;
@@ -18,6 +19,8 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class CanvasContextMenuManager {
 
@@ -95,6 +98,7 @@ public class CanvasContextMenuManager {
         this.items.add(ContextMenuItem.item("gui.gtcalcboard.menu.auto_ratio", "⚖", "Alt+R", () -> {
             if (screen != null && screen.getToolbarWidget() != null) screen.getToolbarWidget().performAutoRatio(false, false);
         }));
+        addRecommendationActions(Set.of());
 
         this.menuX = (int) screenX;
         this.menuY = (int) screenY;
@@ -112,6 +116,9 @@ public class CanvasContextMenuManager {
         }
 
         this.items.clear();
+        if (widget != null && widget.getNode() != null && widget.getNode().isMachine()) {
+            addRecommendationActions(Set.of(widget.getNode().getId()));
+        }
         if (widget != null && widget.getNode() != null && widget.getNode().isModule()) {
             this.items.add(ContextMenuItem.item("gui.gtcalcboard.subpage.open_canvas", "📦", "Enter", () -> {
                 if (screen != null) {
@@ -293,6 +300,14 @@ public class CanvasContextMenuManager {
 
     public void openForSelection(double screenX, double screenY) {
         this.items.clear();
+        if (screen != null && screen.getGraph() != null) {
+            Set<String> targets = screen.getSelectedNodeIds().stream()
+                    .filter(id -> {
+                        RecipeNode node = screen.getGraph().findNodeById(id);
+                        return node != null && node.isMachine();
+                    }).collect(Collectors.toSet());
+            addRecommendationActions(targets);
+        }
         if (screen != null && screen.getSelectedNodeIds().size() >= 2) {
             this.items.add(ContextMenuItem.item("gui.gtcalcboard.menu.auto_connect", "↔", "Shift+C", screen::performAutoConnectForSelection));
         }
@@ -309,6 +324,29 @@ public class CanvasContextMenuManager {
         this.menuX = (int) screenX;
         this.menuY = (int) screenY;
         this.open = true;
+    }
+
+    private void addRecommendationActions(Set<String> targets) {
+        if (screen == null || screen.getGraph() == null) return;
+        if (!targets.isEmpty()) {
+            items.add(ContextMenuItem.item("gui.gtcalcboard.menu.optimize_machines", "T", null,
+                    () -> changeRecommendationTargets(targets)));
+        }
+        if (!screen.getGraph().getRecommendationTargetIds().isEmpty()) {
+            items.add(ContextMenuItem.item("gui.gtcalcboard.menu.clear_optimization", "X", null,
+                    () -> changeRecommendationTargets(Set.of())));
+        }
+    }
+
+    private void changeRecommendationTargets(Set<String> targets) {
+        if (!screen.ensureEditPermission()) return;
+        FlowGraph graph = screen.getGraph();
+        if (graph.getRecommendationTargetIds().equals(targets)) return;
+        RecommendationTargetsCommand command = new RecommendationTargetsCommand(graph.getRecommendationTargetIds(), targets);
+        command.redo(graph);
+        screen.recordCommand(command);
+        screen.markSummaryDirty();
+        screen.markTeamDirty();
     }
 
     public void openForPort(double screenX, double screenY, NodeWidget widget, boolean isInput, int portIndex) {

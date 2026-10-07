@@ -5,6 +5,7 @@ import com.gtceu.calcboard.api.model.RecipeNode;
 import com.gtceu.calcboard.api.type.LineSolveMode;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,11 @@ import net.minecraft.nbt.ListTag;
  * that only helps one arm of the graph scores near zero, which is the honest reading of "improves
  * things around".
  *
+ * <p>With machine targets, compare effective recipe cycles against each target's baseline nominal
+ * capacity instead. Sorted throughput fractions are compared lexicographically, weakest first.
+ * The baseline capacities stay fixed during trials, so adding a target's own capacity counts as
+ * useful only when its actual work increases. Target selection never changes the operating solver.
+ *
  * <h2>Behaviour over time</h2>
  *
  * <p>Nothing here is sticky: the sweep runs whenever the board is re-solved, so as soon as the
@@ -72,6 +78,7 @@ public final class LineBottleneckAnalyzer {
     private static final Set<FlowGraph> SWEEPING = ConcurrentHashMap.newKeySet();
 
     private record CachedResult(CompoundTag content, String nodeId, double gain, Map<String, Double> gains) {}
+    private record TargetCapacity(RecipeNode node, double nominalRate) {}
     private static final Map<FlowGraph, CachedResult> CACHE = Collections.synchronizedMap(new WeakHashMap<>());
     private static Map<String, Double> lastGains = Map.of();
 
@@ -117,7 +124,16 @@ public final class LineBottleneckAnalyzer {
             // efficiency state the caller happened to leave behind. Without this the answer depends on
             // call order instead of on the board's content alone.
             FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
-            Map<String, Double> base = exportRates(graph);
+            boolean targeted = !graph.getRecommendationTargetIds().isEmpty();
+            Map<String, Double> base = targeted ? Map.of() : exportRates(graph);
+            List<TargetCapacity> targets = new ArrayList<>();
+            for (RecipeNode node : graph.getNodes()) {
+                if (!node.isMachine() || !graph.getRecommendationTargetIds().contains(node.getId())) continue;
+                double nominal = node.getNominalCyclesPerSecond();
+                if (Double.isFinite(nominal) && nominal > 0.0) targets.add(new TargetCapacity(node, nominal));
+            }
+            double[] baselineTargets = targetThroughputs(targets);
+            double[] bestTargets = baselineTargets;
 
             List<RecipeNode> machines = new ArrayList<>();
             for (RecipeNode node : graph.getNodes()) {
@@ -134,17 +150,30 @@ public final class LineBottleneckAnalyzer {
                 try {
                     machine.setMachineCount(count + 1.0);
                     FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
-                    gains.put(machine.getId(), medianRelativeGain(base, exportRates(graph)));
+                    if (targeted) {
+                        double[] after = targetThroughputs(targets);
+                        double gain = firstTargetDifference(baselineTargets, after);
+                        gains.put(machine.getId(), gain);
+                        if (gain > GAIN_EPSILON && firstTargetDifference(bestTargets, after) > GAIN_EPSILON) {
+                            bestTargets = after;
+                            bestId = machine.getId();
+                            bestGain = gain;
+                        }
+                    } else {
+                        gains.put(machine.getId(), medianRelativeGain(base, exportRates(graph)));
+                    }
                 } finally {
                     machine.setMachineCount(count);
                 }
             }
 
-            bestGain = GAIN_EPSILON;
-            for (Map.Entry<String, Double> entry : gains.entrySet()) {
-                if (Double.isFinite(entry.getValue()) && entry.getValue() > bestGain) {
-                    bestGain = entry.getValue();
-                    bestId = entry.getKey();
+            if (!targeted) {
+                bestGain = GAIN_EPSILON;
+                for (Map.Entry<String, Double> entry : gains.entrySet()) {
+                    if (Double.isFinite(entry.getValue()) && entry.getValue() > bestGain) {
+                        bestGain = entry.getValue();
+                        bestId = entry.getKey();
+                    }
                 }
             }
             if (bestId == null) bestGain = 0.0;
@@ -173,6 +202,27 @@ public final class LineBottleneckAnalyzer {
             node.setBottleneck(hit);
             node.setBottleneckGain(hit ? gain : 0.0);
         }
+    }
+
+    private static double[] targetThroughputs(List<TargetCapacity> targets) {
+        double[] rates = new double[targets.size()];
+        for (int i = 0; i < targets.size(); i++) {
+            TargetCapacity target = targets.get(i);
+            rates[i] = target.node().getEffectiveCyclesPerSecond() / target.nominalRate();
+            if (!Double.isFinite(rates[i])) {
+                throw new IllegalStateException("Non-finite recommendation target throughput: " + target.node().getId());
+            }
+        }
+        Arrays.sort(rates);
+        return rates;
+    }
+
+    private static double firstTargetDifference(double[] before, double[] after) {
+        for (int i = 0; i < before.length; i++) {
+            double difference = after[i] - before[i];
+            if (Math.abs(difference) > GAIN_EPSILON) return difference;
+        }
+        return 0.0;
     }
 
     /**
@@ -268,6 +318,9 @@ public final class LineBottleneckAnalyzer {
         ListTag edges = new ListTag();
         for (FlowGraph.ConnectionEdge edge : graph.getConnections()) edges.add(edge.serializeNBT());
         state.put("edges", edges);
+        ListTag targets = new ListTag();
+        graph.getRecommendationTargetIds().forEach(id -> targets.add(net.minecraft.nbt.StringTag.valueOf(id)));
+        state.put("recommendationTargets", targets);
         return state;
     }
 
