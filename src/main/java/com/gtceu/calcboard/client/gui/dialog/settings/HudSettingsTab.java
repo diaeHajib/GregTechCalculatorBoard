@@ -50,9 +50,8 @@ public class HudSettingsTab extends AbstractSettingsTab {
 
         String solveModeLabel = Component.translatable("gui.gtcalcboard.settings.solve_mode").getString()
                 + ": §e" + Component.translatable(bm.getLineSolveMode().getTranslationKey()).getString();
-        drawCheckbox(graphics, font, x, rowY, w, rowH, mouseX, mouseY,
-                solveModeLabel,
-                bm.getLineSolveMode().isBlockingAware());
+        drawButton(graphics, font, solveModeLabel, x, rowY, w, rowH,
+                mouseX, mouseY, 0xFFFFFFFF, 0xFF222834, 0xFF35445E);
         rowY += rowH + 2;
 
         drawCheckbox(graphics, font, x, rowY, w, rowH, mouseX, mouseY,

@@ -11,8 +11,10 @@ package com.gtceu.calcboard.api.type;
  * <p>{@link #SUPPLY_AND_DEMAND} additionally constrains every producer by the appetite of the
  * consumers actually wired to its output ports. A machine whose output has nowhere to go is
  * throttled to the rate its consumers can absorb, which then reduces its own demand for inputs and
- * so propagates upstream. This reproduces a real line, where a blocked machine stops and starves
- * whatever feeds it.
+ * so propagates upstream. This assumes wired outputs cannot overflow to an outside outlet.
+ *
+ * <p>{@link #PRIMED} balances sustained flows globally, assumes recycling inventory is already
+ * primed, and permits surplus output to leave the line without blocking its producer.
  *
  * <p>The mode is opt-in so that existing boards keep their historical numbers.
  */
@@ -24,9 +26,11 @@ public enum LineSolveMode {
     SUPPLY_ONLY("gui.gtcalcboard.solve_mode.supply_only", false),
 
     /**
-     * Real-line behaviour: starvation and blocking (forward and backward propagation).
+     * Legacy closed-outlet estimate: starvation and blocking.
      */
-    SUPPLY_AND_DEMAND("gui.gtcalcboard.solve_mode.supply_and_demand", true);
+    SUPPLY_AND_DEMAND("gui.gtcalcboard.solve_mode.supply_and_demand", true),
+
+    PRIMED("gui.gtcalcboard.solve_mode.primed", false);
 
     private final String translationKey;
     private final boolean blockingAware;

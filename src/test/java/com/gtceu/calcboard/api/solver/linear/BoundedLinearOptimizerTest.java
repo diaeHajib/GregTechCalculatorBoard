@@ -40,4 +40,20 @@ class BoundedLinearOptimizerTest {
         assertThrows(IllegalArgumentException.class, () -> BoundedLinearOptimizer.maximize(
                 new double[0][], new double[0], new double[]{1}));
     }
+
+    @Test
+    void lowerObjectivesCannotSacrificeAnEarlierOptimum() {
+        double[] result = BoundedLinearOptimizer.maximizeLexicographic(
+                new double[][]{{1, 1}}, new double[]{1},
+                new double[][]{{1, 0}, {0, 1000000}});
+        assertArrayEquals(new double[]{1, 0}, result, 1e-9);
+    }
+
+    @Test
+    void lowerObjectivesCanReallocateAnEarlierObjectiveTie() {
+        double[] result = BoundedLinearOptimizer.maximizeLexicographic(
+                new double[][]{{1, 1}}, new double[]{1},
+                new double[][]{{1, 1}, {0, 1}});
+        assertArrayEquals(new double[]{0, 1}, result, 1e-9);
+    }
 }

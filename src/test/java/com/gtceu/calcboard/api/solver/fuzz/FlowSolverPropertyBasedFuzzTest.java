@@ -27,6 +27,40 @@ class FlowSolverPropertyBasedFuzzTest {
     private static final double TOLERANCE = 1e-3;
 
     @Test
+    void primedLargeGraphsRemainFiniteAndStable() {
+        assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+            for (long seed = 9000L; seed < 9004L; seed++) {
+                FlowGraph graph = RandomFlowGraphGenerator.generateLargeScale(seed, seed % 2 == 0 ? 50 : 100);
+                var mode = com.gtceu.calcboard.api.type.LineSolveMode.PRIMED;
+                var first = com.gtceu.calcboard.api.solver.FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+                var again = com.gtceu.calcboard.api.solver.FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+                for (var entry : first.entrySet()) {
+                    assertTrue(Double.isFinite(entry.getValue()));
+                    assertTrue(entry.getValue() >= 0 && entry.getValue() <= 1);
+                    assertEquals(entry.getValue(), again.get(entry.getKey()), 1e-9, "seed " + seed);
+                }
+                var index = com.gtceu.calcboard.api.solver.FlowEdgeAllocator.buildEdgeIndex(graph);
+                for (RecipeNode node : graph.getNodes()) {
+                    if (node.isReroute()) continue;
+                    for (int port = 0; port < node.getInputs().size(); port++) {
+                        var incoming = index.getInPortEdges(node.getId(), port);
+                        if (incoming.isEmpty()) continue;
+                        double supplied = incoming.stream().mapToDouble(edge -> graph.getPrimedFlows().get(edge)).sum();
+                        double required = node.getInputSlotRate(port, true);
+                        assertEquals(required, supplied, 1e-6 * Math.max(1.0, required), "seed " + seed);
+                    }
+                    for (int port = 0; port < node.getOutputs().size(); port++) {
+                        double delivered = index.getOutPortEdges(node.getId(), port).stream()
+                                .mapToDouble(edge -> graph.getPrimedFlows().get(edge)).sum();
+                        double produced = node.getOutputSlotRate(port, true);
+                        assertTrue(delivered <= produced + 1e-6 * Math.max(1.0, produced), "seed " + seed);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     void blockingAwareLargeGraphsRemainFiniteAndStable() {
         assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
             for (long seed = 9000L; seed < 9004L; seed++) {

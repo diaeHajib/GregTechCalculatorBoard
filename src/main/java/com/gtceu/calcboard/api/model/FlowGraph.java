@@ -37,6 +37,42 @@ public class FlowGraph {
     private Map<String, Double> productionCapacityEfficiencies = Map.of();
     private Map<ConnectionEdge, Double> closedLoopAllocationWeights = Map.of();
     private LineSolveMode solvedMode = LineSolveMode.SUPPLY_ONLY;
+    private Map<ConnectionEdge, Double> primedFlows = Map.of();
+    private Map<String, Double> primedDrainRates = Map.of();
+    private Map<String, Double> primedExportRates = Map.of();
+    private Map<ConnectionEdge, Double> primedVirtualFlows = Map.of();
+
+    public boolean isPrimedSolve() {
+        return solvedMode == LineSolveMode.PRIMED;
+    }
+
+    public Map<ConnectionEdge, Double> getPrimedFlows() {
+        return primedFlows;
+    }
+
+    public double getPrimedDrainRate(String nodeId) {
+        return primedDrainRates.getOrDefault(nodeId, 0.0);
+    }
+
+    public double getPrimedExportRate(String nodeId) {
+        return primedExportRates.getOrDefault(nodeId, 0.0);
+    }
+
+    public Map<ConnectionEdge, Double> getPrimedVirtualFlows() {
+        return primedVirtualFlows;
+    }
+
+    public void setPrimedFlows(Map<ConnectionEdge, Double> flows, Map<String, Double> drains, Map<String, Double> exports) {
+        setPrimedFlows(flows, drains, exports, Map.of());
+    }
+
+    public void setPrimedFlows(Map<ConnectionEdge, Double> flows, Map<String, Double> drains,
+                               Map<String, Double> exports, Map<ConnectionEdge, Double> virtualFlows) {
+        primedFlows = Map.copyOf(flows);
+        primedDrainRates = Map.copyOf(drains);
+        primedExportRates = Map.copyOf(exports);
+        primedVirtualFlows = Map.copyOf(virtualFlows);
+    }
 
     public Map<ConnectionEdge, Double> getProductionAllocationWeights() {
         if (productionAllocationWeights == null) {
@@ -55,6 +91,10 @@ public class FlowGraph {
         productionAllocationWeights = null;
         productionCapacityEfficiencies = Map.of();
         closedLoopAllocationWeights = Map.of();
+        primedFlows = Map.of();
+        primedDrainRates = Map.of();
+        primedExportRates = Map.of();
+        primedVirtualFlows = Map.of();
     }
 
     public void setProductionAllocationWeights(Map<ConnectionEdge, Double> weights) {
