@@ -685,8 +685,7 @@ public class MachineNodeRole implements INodeRole {
         double blockRatio = getBlockingRatio();
         String blockResource = getBlockingResource();
         boolean isBlocked = throttled
-                && blockRatio < 1.0 - 1e-4
-                && efficiency <= blockRatio + 1e-3;
+                && com.gtceu.calcboard.api.solver.DownstreamBlockingSolver.isBinding(efficiency, blockRatio);
         boolean isStarved = throttled && !isBlocked;
         return new NodeCalculationSnapshot(
             owner.getId(),

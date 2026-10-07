@@ -27,6 +27,23 @@ class FlowSolverPropertyBasedFuzzTest {
     private static final double TOLERANCE = 1e-3;
 
     @Test
+    void blockingAwareLargeGraphsRemainFiniteAndStable() {
+        assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+            for (long seed = 9000L; seed < 9004L; seed++) {
+                FlowGraph graph = RandomFlowGraphGenerator.generateLargeScale(seed, seed % 2 == 0 ? 50 : 100);
+                var mode = com.gtceu.calcboard.api.type.LineSolveMode.SUPPLY_AND_DEMAND;
+                var first = com.gtceu.calcboard.api.solver.FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+                var again = com.gtceu.calcboard.api.solver.FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+                for (var entry : first.entrySet()) {
+                    assertTrue(Double.isFinite(entry.getValue()));
+                    assertTrue(entry.getValue() >= 0 && entry.getValue() <= 1);
+                    assertEquals(entry.getValue(), again.get(entry.getKey()), 1e-9, "seed " + seed);
+                }
+            }
+        });
+    }
+
+    @Test
     @DisplayName("Invariant 1 & 3: MassBalanceSolver guarantees arithmetic safety and finite termination")
     void testMassBalanceSolverArithmeticSafetyAndFiniteTermination() {
         assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {

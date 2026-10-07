@@ -2,6 +2,8 @@ package com.gtceu.calcboard.api.solver;
 
 import com.gtceu.calcboard.api.model.FlowGraph;
 import com.gtceu.calcboard.api.model.RecipeNode;
+import com.gtceu.calcboard.api.model.IngredientStack;
+import com.gtceu.calcboard.api.type.FlowSplitMode;
 import com.gtceu.calcboard.api.type.GTVoltageTier;
 import com.gtceu.calcboard.api.type.LineSolveMode;
 import com.gtceu.calcboard.api.type.SupplyMode;
@@ -13,8 +15,7 @@ import java.io.DataInputStream;
 import java.io.InputStream;
 import java.util.zip.GZIPInputStream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Pins the bottleneck sweep's cache-invalidation contract.
@@ -162,5 +163,164 @@ public class BottleneckCacheInvalidationTest {
         long before = key(graph);
         machine(graph).setPos(4321.0, 1234.0);
         assertEquals(before, key(graph), "moving a card must not invalidate the bottleneck cache");
+    }
+
+    @Test
+    void splitLimitsPrioritiesWeightsAndHardwareInvalidate() throws Exception {
+        FlowGraph graph = load("platline");
+        FlowGraph.ConnectionEdge edge = graph.getConnections().get(0);
+        long before = key(graph);
+        graph.removeConnection(edge);
+        graph.addConnection(edge.withFixedLimit(0.123));
+        assertNotEquals(before, key(graph));
+        before = key(graph);
+        graph.removeConnection(edge.withFixedLimit(0.123));
+        graph.addConnection(edge.withPriority(3).withWeight(2));
+        assertNotEquals(before, key(graph));
+        RecipeNode junction = RecipeNode.createReroute(0, 0);
+        graph.addNode(junction);
+        before = key(graph);
+        junction.setJunctionSplitMode(FlowSplitMode.EQUAL);
+        assertNotEquals(before, key(graph));
+        before = key(graph);
+        machine(graph).setRotorEfficiency(73);
+        assertNotEquals(before, key(graph));
+    }
+
+    @Test
+    void subpageContentAndExternalAllocationsInvalidate() throws Exception {
+        FlowGraph graph = load("platline");
+        RecipeNode module = RecipeNode.create("module", 20, 0, GTVoltageTier.LV);
+        module.setModule(true);
+        FlowGraph subpage = load("hydrogen_loop");
+        module.setSubGraph(subpage);
+        graph.addNode(module);
+        long before = key(graph);
+        machine(subpage).setMachineCount(3);
+        assertNotEquals(before, key(graph));
+        before = key(graph);
+        machine(subpage).setPos(123, 456);
+        assertEquals(before, key(graph));
+        RecipeNode junction = RecipeNode.createReroute(0, 0);
+        graph.addNode(junction);
+        before = key(graph);
+        junction.setAllocatedExportRate(42);
+        assertNotEquals(before, key(graph));
+    }
+
+    private static final class CountingMachine extends RecipeNode {
+        int perturbations;
+        boolean failTrial;
+
+        CountingMachine(String id) {
+            super(id, id, 20, 20, GTVoltageTier.MV);
+            addOutput(IngredientStack.item(net.minecraft.resources.ResourceLocation.tryParse("test:product"),
+                    "Product", 1, 1));
+        }
+
+        @Override
+        public void setMachineCount(double count) {
+            if (count > getMachineCount()) perturbations++;
+            super.setMachineCount(count);
+        }
+
+        @Override
+        public double getOutputSlotRate(int index, boolean effective) {
+            if (failTrial && getMachineCount() > 1) throw new IllegalStateException("trial failed");
+            return super.getOutputSlotRate(index, effective);
+        }
+    }
+
+    @Test
+    void noBenefitResultsAreCachedPerGraphAcrossPageSwitches() {
+        FlowGraph a = new FlowGraph();
+        CountingMachine machine = new CountingMachine("a");
+        a.addNode(machine);
+        RecipeNode sink = RecipeNode.create("sink", 20, 20, GTVoltageTier.MV);
+        sink.addInput(machine.getOutputs().get(0).copy());
+        a.addNode(sink);
+        a.addConnection(machine.getId(), 0, sink.getId(), 0);
+        FixedPointEfficiencySolver.computeNodeEfficiencies(a, MODE);
+        assertFalse(machine.isBottleneck());
+        int before = machine.perturbations;
+        FlowGraph b = new FlowGraph();
+        b.addNode(new CountingMachine("b"));
+        FixedPointEfficiencySolver.computeNodeEfficiencies(b, MODE);
+        FixedPointEfficiencySolver.computeNodeEfficiencies(a, MODE);
+        assertEquals(before, machine.perturbations, "no-winner cache survives visiting another graph");
+        assertFalse(machine.isBottleneck());
+    }
+
+    @Test
+    void failedTrialRestoresCountsAndAllowsNextSweep() {
+        FlowGraph graph = new FlowGraph();
+        CountingMachine machine = new CountingMachine("failure");
+        graph.addNode(machine);
+        machine.failTrial = true;
+        assertThrows(IllegalStateException.class,
+                () -> FixedPointEfficiencySolver.computeNodeEfficiencies(graph, MODE));
+        assertEquals(1, machine.getMachineCount());
+        assertEquals(1, machine.getEfficiency());
+        machine.failTrial = false;
+        FixedPointEfficiencySolver.computeNodeEfficiencies(graph, MODE);
+        assertTrue(machine.isBottleneck(), "failure must release the sweep guard");
+        assertEquals(1, machine.getMachineCount());
+    }
+
+    @Test
+    void cachedContentDoesNotAliasMutablePropertyTags() {
+        FlowGraph graph = new FlowGraph();
+        CountingMachine machine = new CountingMachine("mutable-property");
+        graph.addNode(machine);
+        CompoundTag property = new CompoundTag();
+        property.putInt("version", 1);
+        machine.getProperties().set(com.gtceu.calcboard.api.property.NodeProperties.ORIGINAL_RECIPE_SPEC, property);
+        FixedPointEfficiencySolver.computeNodeEfficiencies(graph, MODE);
+        int before = machine.perturbations;
+        machine.getProperties().get(com.gtceu.calcboard.api.property.NodeProperties.ORIGINAL_RECIPE_SPEC)
+                .putInt("version", 2);
+        FixedPointEfficiencySolver.computeNodeEfficiencies(graph, MODE);
+        assertTrue(machine.perturbations > before, "a cached snapshot must not mutate along with live properties");
+    }
+
+    @Test
+    void remoteDemandInvalidatesEvenWhenExportAllocationIsUnchanged() {
+        try {
+            FlowGraph sourceGraph = new FlowGraph();
+            FlowGraph targetGraph = new FlowGraph();
+            var sourcePage = new com.gtceu.calcboard.api.storage.BoardPage("cache-source", "Source", sourceGraph);
+            var targetPage = new com.gtceu.calcboard.api.storage.BoardPage("cache-target", "Target", targetGraph);
+            RecipeNode source = RecipeNode.createReroute(0, 0);
+            source.bindRerouteIngredient(IngredientStack.item(
+                    net.minecraft.resources.ResourceLocation.tryParse("test:feed"), "Feed", 1));
+            source.setSupplyMode(SupplyMode.FIXED_RATE);
+            source.setExternalSupplyRate(10);
+            source.addExportTarget(new com.gtceu.calcboard.api.model.CrossPageExportTarget(targetPage.getId(), 0, 0));
+            sourceGraph.addNode(source);
+            RecipeNode inlet = RecipeNode.createReroute(0, 0);
+            inlet.bindRerouteIngredient(source.getOutputs().get(0));
+            inlet.setSupplyMode(SupplyMode.LINKED_JUNCTION);
+            inlet.setLinkedSourcePageId(sourcePage.getId());
+            inlet.setLinkedSourceNodeId(source.getId());
+            targetGraph.addNode(inlet);
+            RecipeNode consumer = RecipeNode.create("Consumer", 20, 20, GTVoltageTier.MV);
+            consumer.addInput(IngredientStack.item(
+                    net.minecraft.resources.ResourceLocation.tryParse("test:feed"), "Feed", 20));
+            targetGraph.addNode(consumer);
+            targetGraph.addConnection(inlet.getId(), 0, consumer.getId(), 0);
+            var pages = java.util.List.of(sourcePage, targetPage);
+            WorkspaceFlowCoordinator.coordinate(pages);
+            long before = key(sourceGraph);
+            double exported = source.getAllocatedExportRate();
+            double demand = WorkspaceFlowCoordinator.getLastResult().getDemandRate(inlet.getId());
+            consumer.setMachineCount(2);
+            consumer.setEfficiency(1);
+            WorkspaceFlowCoordinator.coordinate(pages);
+            assertTrue(WorkspaceFlowCoordinator.getLastResult().getDemandRate(inlet.getId()) > demand);
+            assertEquals(exported, source.getAllocatedExportRate(), 1e-9);
+            assertNotEquals(before, key(sourceGraph));
+        } finally {
+            WorkspaceFlowCoordinator.invalidate();
+        }
     }
 }

@@ -230,6 +230,20 @@ $$A_{ij} \leftarrow A_{ij} - \frac{A_{ik}}{A_{kk}} A_{kj}, \quad b_i \leftarrow 
 
 ### [Algorithm 1] 10-Pass Fixed-Point Bottleneck Relaxation
 
+#### Production supply and demand mode
+
+`SUPPLY_ONLY` remains the default historical solver. The opt-in `SUPPLY_AND_DEMAND` production solve also limits a producer to its downstream acceptance. This does not replace the effective demand used by auto-ratio sizing.
+
+Acceptance and production split weights are derived from nominal consumer capacity, discounted by downstream acceptance and structural coverage of other feeds, not by the consumer's current efficiency. A 30 B/min producer feeding consumers that accept 7.2 and 9.6 B/min runs at 56% and sends exactly those two shares. Competing producers share a consuming port's capacity in proportion to their nominal incoming capacities. Relay chains carry appetite upstream, subtract their own external supply and add fixed drains/allocated exports. Existing explicit split modes, priorities and wire limits still control allocation.
+
+The acceptance analysis is memoized for one graph solve, not globally. Every two-sided solve starts from full efficiency, independently of previously displayed throttles. The graph retains its solved allocation mode for port statistics even if the process-wide board preference changes. A machine below its acceptance ceiling remains input-starved (amber); only a binding downstream limit is reported as blocked (magenta). A tied constraint is shown as blocked, provided the input actually covers the accepted rate.
+
+Unwired/dead-ended outputs are assumed exported or vented; explicit void sinks are unbounded. Recirculating output ports retain nominal loop appetite rather than repeatedly discounting themselves; the existing supply-side loop analysis handles recirculation. Structural other-feed coverage is deliberately not a global optimization of competing feeds. These are steady-state estimates, not buffer/startup simulation or proof of a feasible schedule for every arbitrary cyclic, priority-routed network.
+
+The lime bottleneck recommendation is measured in **both modes**: add one machine to each eligible producer in turn, re-solve, and select the largest positive **median relative gain across unwired output products**. Zero-baseline products are excluded. Product selection, cost weighting and a different scoring policy are not implied. Trials restore machine counts even on failure and re-solve the original graph before returning. Weak per-graph caches include no-benefit results and compare serialized hardware, ingredient identity, full edge settings, nominal rates, external allocations and subpage content. Cosmetic layout and transient efficiencies are excluded. A cache miss still costs one solve per candidate plus baseline/restoration solves.
+
+#### Historical forward-only relaxation
+
 Iteratively converges machine steady-state utilization efficiencies ($\eta_v \in [0.0, 1.0]$) under upstream supply limits.
 
 1. **Initialization**: Set $\eta_v^{(0)} = 1.0$ for all $v \in V$.

@@ -151,15 +151,15 @@ public class RealBoardRegressionTest {
     public void bottleneckFlagIsClearedOnResolve() throws Exception {
         FlowGraph graph = load("platline");
         FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
+        Map<String, Boolean> expected = new LinkedHashMap<>();
         for (RecipeNode node : graph.getNodes()) {
+            expected.put(node.getId(), node.isBottleneck());
             node.setBottleneck(true);
         }
         FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
         for (RecipeNode node : graph.getNodes()) {
-            if (node.isBottleneck()) {
-                assertTrue(node.getBlockingRatio() >= 1.0 - 1e-4 && node.getEfficiency() >= 1.0 - 1e-4,
-                        node.getName() + " kept a stale bottleneck flag");
-            }
+            assertEquals(expected.get(node.getId()), node.isBottleneck(),
+                    node.getName() + " must restore the measured winner, not a saturation heuristic");
         }
     }
 
@@ -170,13 +170,36 @@ public class RealBoardRegressionTest {
      */
     @Test
     public void repeatedSolvesAreStable() throws Exception {
-        FlowGraph graph = load("platline");
-        Map<String, Double> first = efficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
-        for (int pass = 0; pass < 4; pass++) {
-            Map<String, Double> again = efficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
-            for (Map.Entry<String, Double> e : first.entrySet()) {
-                assertEquals(e.getValue(), again.get(e.getKey()), 1e-9,
-                        e.getKey() + " drifted on re-solve");
+        for (String board : new String[]{"platline", "hydrogen_loop", "chlorine", "platline_shared_feed"}) {
+            FlowGraph graph = load(board);
+            Map<String, Double> first = FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
+            for (int pass = 0; pass < 4; pass++) {
+                Map<String, Double> again = FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
+                for (Map.Entry<String, Double> e : first.entrySet()) {
+                    assertEquals(e.getValue(), again.get(e.getKey()), 1e-9,
+                            board + ": " + e.getKey() + " drifted on re-solve");
+                }
+            }
+        }
+    }
+
+    @Test
+    void reversedInsertionOrderAndStaleEfficienciesDoNotCollapseBoards() throws Exception {
+        for (String board : new String[]{"platline", "hydrogen_loop", "chlorine", "platline_shared_feed"}) {
+            FlowGraph graph = load(board);
+            FlowGraph reversed = new FlowGraph();
+            for (int i = graph.getNodes().size() - 1; i >= 0; i--) {
+                RecipeNode node = graph.getNodes().get(i).copy(graph.getNodes().get(i).getId());
+                node.setEfficiency(0);
+                reversed.addNode(node);
+            }
+            for (int i = graph.getConnections().size() - 1; i >= 0; i--) {
+                reversed.addConnection(graph.getConnections().get(i));
+            }
+            Map<String, Double> expected = FixedPointEfficiencySolver.computeNodeEfficiencies(graph, LineSolveMode.SUPPLY_AND_DEMAND);
+            Map<String, Double> actual = FixedPointEfficiencySolver.computeNodeEfficiencies(reversed, LineSolveMode.SUPPLY_AND_DEMAND);
+            for (Map.Entry<String, Double> entry : expected.entrySet()) {
+                assertEquals(entry.getValue(), actual.get(entry.getKey()), 1e-4, board + ": " + entry.getKey());
             }
         }
     }

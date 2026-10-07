@@ -77,8 +77,8 @@ public final class FlowSummaryAggregator {
         boolean isDemandThrottled = isConnected
                 && !node.isReroute()
                 && totalSupplied < nominalReq - 0.001
-                && blockRatio < 1.0 - 1e-4
-                && node.getEfficiency() <= blockRatio + 1e-3;
+                && DownstreamBlockingSolver.isBinding(node.getEfficiency(), blockRatio)
+                && totalSupplied >= nominalReq * blockRatio * 0.999 - 1e-9;
 
         FixedPointEfficiencySolver.PrecomputedDampedLoopMeta dampedMeta = (!node.isReroute())
                 ? FixedPointEfficiencySolver.findDampedLoopMeta(graph, node, inputIndex)

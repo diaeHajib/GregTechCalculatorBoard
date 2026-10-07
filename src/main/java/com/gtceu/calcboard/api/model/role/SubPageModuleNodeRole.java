@@ -355,8 +355,7 @@ public class SubPageModuleNodeRole implements INodeRole {
         double blockRatio = getBlockingRatio();
         String blockResource = getBlockingResource();
         boolean isBlocked = throttled
-                && blockRatio < 1.0 - 1e-4
-                && owner.getEfficiency() <= blockRatio + 1e-3;
+                && com.gtceu.calcboard.api.solver.DownstreamBlockingSolver.isBinding(owner.getEfficiency(), blockRatio);
         boolean isStarved = throttled && !isBlocked;
         return new NodeCalculationSnapshot(
             owner.getId(),

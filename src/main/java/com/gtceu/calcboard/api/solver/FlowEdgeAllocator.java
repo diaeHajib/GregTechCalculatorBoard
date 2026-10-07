@@ -64,8 +64,13 @@ public final class FlowEdgeAllocator {
 
     public record SolverContext(
             CachedEdgeIndex edgeIndex,
-            CachedPortRates portRates
+            CachedPortRates portRates,
+            Map<FlowGraph.ConnectionEdge, Double> allocationWeights
     ) {
+        public SolverContext(CachedEdgeIndex edgeIndex, CachedPortRates portRates) {
+            this(edgeIndex, portRates, Map.of());
+        }
+
         public static SolverContext create(FlowGraph graph) {
             return new SolverContext(buildEdgeIndex(graph), buildPortRates(graph));
         }
@@ -311,15 +316,12 @@ public final class FlowEdgeAllocator {
             return extraDemands.get(edge);
         }
         if (graph == null) return 0.0;
-        // NOTE: weighting this by DownstreamBlockingSolver.edgeAppetite() (the capacity-anchored figure)
-        // fixes the split between consumers of a shared producer - see SharedProducerAppetiteTest - but
-        // it must not be done naively here. Two problems, both measured:
-        //   1. edgeAppetite() resolves a consumer's acceptance ceiling recursively, and this method runs
-        //      per edge per allocation, so large graphs blow up (FlowSolverPropertyBasedFuzzTest timed
-        //      out at 15 s on the 50-100 node cases). It needs a per-solve memoization of the ceilings.
-        //   2. the same demandMap drives proportional scaling, so anchoring it also moves auto-ratio
-        //      results (SteamOreFactoryRegressionTest). The split weight and the scaling demand have to
-        //      be separated before this can change.
+        // Only allocation uses anchored weights. getConnectedConsumerDemand remains the historical
+        // effective demand used by auto-ratio and scaling, including when the board is blocking-aware.
+        Map<FlowGraph.ConnectionEdge, Double> weights = context != null
+                ? context.allocationWeights() : graph.getProductionAllocationWeights();
+        Double weight = weights.get(edge);
+        if (weight != null) return weight;
         RecipeNode consumer = graph.findNodeById(edge.toNodeId());
         return getConnectedConsumerDemand(graph, consumer, edge.inputIndex(), effMap, context);
     }
@@ -1043,6 +1045,17 @@ public final class FlowEdgeAllocator {
             extraEdges.add(edge);
             extraDemands.put(edge, demand);
         }
+    }
+
+    static Map<FlowGraph.ConnectionEdge, Double> virtualExportDemands(FlowGraph graph, RecipeNode producer) {
+        if (!producer.isReroute()) return Map.of();
+        String pageId = WorkspaceFlowCoordinator.findPageIdForGraph(graph);
+        List<WorkspaceFlowCoordinator.InterPageLink> links = pageId != null
+                ? WorkspaceFlowCoordinator.getLinksForSource(pageId, producer.getId()) : List.of();
+        if (producer.getExportTargets().isEmpty() && links.isEmpty()) return Map.of();
+        Map<FlowGraph.ConnectionEdge, Double> demands = new LinkedHashMap<>();
+        collectVirtualExportEdges(graph, producer, new ArrayList<>(), demands, links);
+        return demands;
     }
 
     private static double resolveLinkTargetDemand(
