@@ -104,8 +104,9 @@ public final class FixedPointEfficiencySolver {
     /**
      * Computes node operating efficiencies under the requested constraint model.
      *
-     * <p>{@link LineSolveMode#SUPPLY_ONLY} runs the historical forward-only fixed point and is
-     * behaviourally identical to {@link #computeNodeEfficiencies(FlowGraph)}.
+     * <p>{@link LineSolveMode#SUPPLY_ONLY} runs the forward-only fixed point and is
+     * behaviourally identical to {@link #computeNodeEfficiencies(FlowGraph)}. Isolated recycling
+     * components start from a capacity-feasible operating point rather than mismatched nominal rates.
      *
      * <p>{@link LineSolveMode#SUPPLY_AND_DEMAND} runs the two-sided fixed point described in
      * {@link #computeNodeEfficienciesWithDemand(FlowGraph)}, which additionally throttles producers
@@ -132,9 +133,14 @@ public final class FixedPointEfficiencySolver {
             effMap.put(node.getId(), 1.0);
         }
 
-        FlowEdgeAllocator.SolverContext context = FlowEdgeAllocator.SolverContext.create(graph);
+        FlowEdgeAllocator.SolverContext structuralContext = FlowEdgeAllocator.SolverContext.create(graph);
+        List<ClosedLoopCapacitySolver.Capacity> closedLoops = ClosedLoopCapacitySolver.solve(graph, structuralContext);
+        Map<FlowGraph.ConnectionEdge, Double> loopWeights = closedLoopWeights(closedLoops);
+        FlowEdgeAllocator.SolverContext context = new FlowEdgeAllocator.SolverContext(
+                structuralContext.edgeIndex(), structuralContext.portRates(), loopWeights);
+        seedClosedLoopEfficiencies(graph, effMap, closedLoops);
         List<PrecomputedLoopMeta> loopMetas = precomputeLoopMetas(graph, context);
-        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, context);
+        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, context, closedLoops);
 
         for (int iter = 0; iter < 10; iter++) {
             boolean changed = false;
@@ -172,6 +178,8 @@ public final class FixedPointEfficiencySolver {
         LineBottleneckAnalyzer.markBottlenecks(graph, LineSolveMode.SUPPLY_ONLY);
 
         graph.invalidatePortStatsCache();
+        graph.setClosedLoopAllocationWeights(loopWeights);
+        graph.setProductionAllocationWeights(loopWeights);
 
         return effMap;
     }
@@ -206,15 +214,20 @@ public final class FixedPointEfficiencySolver {
         Map<String, Double> capacityEfficiencies = Map.of();
         boolean sharedInputs = hasSharedInputs(graph);
         FlowEdgeAllocator.SolverContext structuralContext = FlowEdgeAllocator.SolverContext.create(graph);
+        List<ClosedLoopCapacitySolver.Capacity> closedLoops = ClosedLoopCapacitySolver.solve(graph, structuralContext);
+        Map<FlowGraph.ConnectionEdge, Double> loopWeights = closedLoopWeights(closedLoops);
         List<PrecomputedLoopMeta> loopMetas = precomputeLoopMetas(graph, structuralContext);
-        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, structuralContext);
+        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, structuralContext, closedLoops);
         for (int capacityIter = 0; capacityIter < MAX_BLOCKING_ITERATIONS; capacityIter++) {
             for (RecipeNode node : graph.getNodes()) {
                 effMap.put(node.getId(), 1.0);
                 node.setEfficiency(1.0);
             }
+            seedClosedLoopEfficiencies(graph, effMap, closedLoops);
             analysis = analysis.withCapacityEfficiencies(capacityEfficiencies);
-            weights = analysis.allocationWeights();
+            Map<FlowGraph.ConnectionEdge, Double> combinedWeights = new HashMap<>(analysis.allocationWeights());
+            combinedWeights.putAll(loopWeights);
+            weights = Map.copyOf(combinedWeights);
             FlowEdgeAllocator.SolverContext context = new FlowEdgeAllocator.SolverContext(
                     structuralContext.edgeIndex(), structuralContext.portRates(), weights);
             solveDemandEfficiencies(graph, effMap, analysis, context, loopMetas, dampedLoopMetas);
@@ -239,8 +252,26 @@ public final class FixedPointEfficiencySolver {
         LineBottleneckAnalyzer.markBottlenecks(graph, LineSolveMode.SUPPLY_AND_DEMAND);
         graph.invalidatePortStatsCache();
         graph.setProductionCapacityEfficiencies(capacityEfficiencies);
+        graph.setClosedLoopAllocationWeights(loopWeights);
         graph.setProductionAllocationWeights(weights);
         return effMap;
+    }
+
+    private static Map<FlowGraph.ConnectionEdge, Double> closedLoopWeights(
+            List<ClosedLoopCapacitySolver.Capacity> closedLoops) {
+        Map<FlowGraph.ConnectionEdge, Double> weights = new HashMap<>();
+        for (ClosedLoopCapacitySolver.Capacity capacity : closedLoops) weights.putAll(capacity.flows());
+        return Map.copyOf(weights);
+    }
+
+    private static void seedClosedLoopEfficiencies(
+            FlowGraph graph, Map<String, Double> efficiencies, List<ClosedLoopCapacitySolver.Capacity> closedLoops) {
+        for (ClosedLoopCapacitySolver.Capacity capacity : closedLoops) {
+            efficiencies.putAll(capacity.efficiencies());
+            for (Map.Entry<String, Double> entry : capacity.efficiencies().entrySet()) {
+                graph.findNodeById(entry.getKey()).setEfficiency(entry.getValue());
+            }
+        }
     }
 
     private static boolean hasSharedInputs(FlowGraph graph) {
@@ -593,6 +624,13 @@ public final class FixedPointEfficiencySolver {
     }
 
     public static List<PrecomputedDampedLoopMeta> precomputeDampedLoopMetas(FlowGraph graph, FlowEdgeAllocator.SolverContext context) {
+        if (graph == null || graph.getNodes().isEmpty()) return List.of();
+        FlowEdgeAllocator.SolverContext structuralContext = context != null ? context : FlowEdgeAllocator.SolverContext.create(graph);
+        return precomputeDampedLoopMetas(graph, context, ClosedLoopCapacitySolver.solve(graph, structuralContext));
+    }
+
+    private static List<PrecomputedDampedLoopMeta> precomputeDampedLoopMetas(
+            FlowGraph graph, FlowEdgeAllocator.SolverContext context, List<ClosedLoopCapacitySolver.Capacity> closedLoops) {
         List<PrecomputedDampedLoopMeta> result = new ArrayList<>();
         if (graph == null || graph.getNodes().isEmpty() || graph.getConnections().isEmpty()) {
             return result;
@@ -602,6 +640,9 @@ public final class FixedPointEfficiencySolver {
         List<Set<String>> sccs = ProcessStabilityAnalyzer.findStronglyConnectedComponents(graph, edgeIndex);
         for (Set<String> scc : sccs) {
             if (scc.size() < 2 && !ProcessStabilityAnalyzer.hasSelfLoop(graph, scc, edgeIndex)) {
+                continue;
+            }
+            if (closedLoops.stream().anyMatch(capacity -> capacity.nodeIds().equals(scc))) {
                 continue;
             }
             collectDampedMetasForScc(graph, scc, edgeIndex, context, result);
