@@ -10,6 +10,8 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Computes the <em>output-side</em> (backpressure) constraint of a production line.
@@ -25,10 +27,9 @@ import java.util.Set;
  *   <li><b>Nominal production</b> of an output port: {@code node.getOutputSlotRate(index, false)},
  *       i.e. recipe amount x output chance x machine count, <em>before</em> any efficiency
  *       throttling. This is the ceiling the port could push out if nothing held it back.</li>
- *   <li><b>Accepted rate</b> of an output port: the effective appetite of everything reachable
- *       downstream, obtained from {@link AutoRatioFlowTraverser} with {@code effective = true} so
- *       that throttled consumers ask for proportionally less. Exports, fixed drains and relays with
- *       their own external supply are already netted out by that traversal.</li>
+ *   <li><b>Accepted rate</b> of an output port: nominal consumer capacity discounted by downstream
+ *       acceptance and structural other-feed coverage. Relays net external supply against drains,
+ *       exports and downstream appetite. Recirculating ports retain nominal loop demand.</li>
  *   <li><b>Acceptance ratio</b>: {@code accepted / nominal}, clamped to [0, 1]. A node's acceptance
  *       is the minimum ratio over its output ports. It is the largest efficiency the node may run at
  *       without its outputs backing up.</li>
@@ -51,7 +52,7 @@ import java.util.Set;
  * down to zero, which is the correct answer when a consumer's appetite has collapsed and is exactly
  * the stall the board previously could not show.
  *
- * <p>Stateless and side-effect free; computes from the graph's current node efficiencies.
+ * <p>Each {@link Analysis} memoizes one graph's hardware-derived ceilings, not its current throttles.
  */
 public final class DownstreamBlockingSolver {
 
@@ -61,11 +62,115 @@ public final class DownstreamBlockingSolver {
     /** A ratio within this distance of 1.0 counts as unconstrained. */
     public static final double RATIO_EPSILON = 1e-4;
 
-    /**
-     * Nodes currently being analysed on this thread. The acceptance ceiling of a node is derived from
-     * the ceilings of its consumers, so analysing a cyclic graph would otherwise recurse forever.
-     */
-    private static final ThreadLocal<Set<String>> ANALYSING = ThreadLocal.withInitial(HashSet::new);
+    public static boolean isBinding(double efficiency, double acceptanceRatio) {
+        return acceptanceRatio < 1.0 - RATIO_EPSILON
+                && Math.abs(efficiency - acceptanceRatio) <= Math.max(1e-9, acceptanceRatio * 1e-3);
+    }
+
+    /** A hardware snapshot for one solve, never shared across graphs or retained after edits. */
+    public static final class Analysis {
+        private final FlowGraph graph;
+        private final Map<String, NodeAcceptance> nodes = new HashMap<>();
+        private final Map<FlowGraph.ConnectionEdge, Double> appetites = new HashMap<>();
+        private final Set<String> analysing = new HashSet<>();
+        private final Set<FlowGraph.ConnectionEdge> visitingEdges = new HashSet<>();
+
+        public Analysis(FlowGraph graph) {
+            this.graph = graph;
+        }
+
+        public NodeAcceptance analyzeNode(RecipeNode node) {
+            if (node == null || node.isReroute()) return NodeAcceptance.UNCONSTRAINED;
+            NodeAcceptance cached = nodes.get(node.getId());
+            if (cached != null) return cached;
+            if (!analysing.add(node.getId())) return NodeAcceptance.UNCONSTRAINED;
+            try {
+                NodeAcceptance result = analyzeNodeUncycled(graph, node, this);
+                nodes.put(node.getId(), result);
+                return result;
+            } finally {
+                analysing.remove(node.getId());
+            }
+        }
+
+        public double edgeAppetite(FlowGraph.ConnectionEdge edge) {
+            Double cached = appetites.get(edge);
+            if (cached != null) return cached;
+            if (!visitingEdges.add(edge)) return 0.0;
+            try {
+                RecipeNode producer = graph.findNodeById(edge.fromNodeId());
+                RecipeNode consumer = graph.findNodeById(edge.toNodeId());
+                if (producer == null || consumer == null) return 0.0;
+                double want;
+                if (consumer.isReroute()) {
+                    if (consumer.isInfiniteSupply() || consumer.isVoidSink()) return 0.0;
+                    want = consumer.getAllocatedExportRate();
+                    if (consumer.isFixedDrain()) want += consumer.getExternalDrainRate();
+                    for (FlowGraph.ConnectionEdge next : edgesFrom(graph, consumer.getId(), 0)) {
+                        want += edgeAppetite(next);
+                    }
+                    if (consumer.isExternalSupply()) {
+                        want = Math.max(0.0, want - consumer.getExternalSupplyRate());
+                    }
+                } else {
+                    want = consumer.getInputSlotRate(edge.inputIndex(), false);
+                    want *= Math.min(analyzeNode(consumer).ratio(),
+                            otherFeedCoverage(graph, consumer, producer, this));
+                }
+                // Competing producers share a port's capacity; do not count its whole demand twice.
+                double totalCapacity = 0.0;
+                double ownCapacity = nominalEdgeCapacity(edge, new HashSet<>());
+                int incoming = 0;
+                for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
+                    if (in.toNodeId().equals(edge.toNodeId()) && in.inputIndex() == edge.inputIndex()) {
+                        totalCapacity += nominalEdgeCapacity(in, new HashSet<>());
+                        incoming++;
+                    }
+                }
+                double share = Double.isFinite(totalCapacity) && totalCapacity > RATE_EPSILON
+                        ? ownCapacity / totalCapacity : 1.0 / Math.max(1, incoming);
+                want *= share;
+                if (edge.hasFixedLimit()) want = Math.min(want, edge.fixedFlowLimit());
+                want = Math.max(0.0, want);
+                appetites.put(edge, want);
+                return want;
+            } finally {
+                visitingEdges.remove(edge);
+            }
+        }
+
+        private double nominalEdgeCapacity(FlowGraph.ConnectionEdge edge, Set<String> visited) {
+            RecipeNode node = graph.findNodeById(edge.fromNodeId());
+            if (node == null || !visited.add(node.getId())) return 0.0;
+            try {
+                double capacity = node.getOutputSlotRate(edge.outputIndex(), false);
+                if (node.isReroute()) {
+                    if (node.isInfiniteSupply()) return Double.POSITIVE_INFINITY;
+                    boolean wired = false;
+                    for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
+                        if (in.toNodeId().equals(node.getId())) {
+                            wired = true;
+                            capacity += nominalEdgeCapacity(in, visited);
+                        }
+                    }
+                    // Match the forward solver's free-input convention, including a linked junction
+                    // whose workspace allocation is not available (e.g. a standalone saved page).
+                    if (!wired && capacity <= RATE_EPSILON && !node.isFixedDrain()) {
+                        return Double.POSITIVE_INFINITY;
+                    }
+                    if (node.isFixedDrain()) capacity = Math.max(0.0, capacity - node.getExternalDrainRate());
+                }
+                return edge.hasFixedLimit() ? Math.min(capacity, edge.fixedFlowLimit()) : capacity;
+            } finally {
+                visited.remove(node.getId());
+            }
+        }
+
+        public Map<FlowGraph.ConnectionEdge, Double> allocationWeights() {
+            for (FlowGraph.ConnectionEdge edge : graph.getConnections()) edgeAppetite(edge);
+            return Map.copyOf(appetites);
+        }
+    }
 
     private DownstreamBlockingSolver() {}
 
@@ -181,8 +286,9 @@ public final class DownstreamBlockingSolver {
         if (graph == null) {
             return ratios;
         }
+        Analysis analysis = new Analysis(graph);
         for (RecipeNode node : graph.getNodes()) {
-            ratios.put(node.getId(), acceptanceRatio(graph, node));
+            ratios.put(node.getId(), analysis.analyzeNode(node).ratio());
         }
         return ratios;
     }
@@ -208,21 +314,10 @@ public final class DownstreamBlockingSolver {
         if (graph == null || node == null || node.isReroute()) {
             return NodeAcceptance.UNCONSTRAINED;
         }
-        Set<String> inProgress = ANALYSING.get();
-        if (!inProgress.add(node.getId())) {
-            // This node is already being analysed further up the stack: the graph has a cycle. Report
-            // it unconstrained - the same convention the topological recirculation guard uses - and let
-            // the forward pass account for the loop, rather than recursing until the stack dies.
-            return NodeAcceptance.UNCONSTRAINED;
-        }
-        try {
-            return analyzeNodeUncycled(graph, node);
-        } finally {
-            inProgress.remove(node.getId());
-        }
+        return new Analysis(graph).analyzeNode(node);
     }
 
-    private static NodeAcceptance analyzeNodeUncycled(FlowGraph graph, RecipeNode node) {
+    private static NodeAcceptance analyzeNodeUncycled(FlowGraph graph, RecipeNode node, Analysis analysis) {
         double ratio = 1.0;
         PortAcceptance binding = null;
         boolean unwired = false;
@@ -235,7 +330,7 @@ public final class DownstreamBlockingSolver {
             if (nominal <= RATE_EPSILON) {
                 continue;
             }
-            PortAcceptance port = analyzeOutputPort(graph, node, i);
+            PortAcceptance port = analyzeOutputPort(graph, node, i, analysis);
             if (port.sinkKind() == SinkKind.NO_SINK) {
                 unwired = true;
             } else if (port.sinkKind() == SinkKind.VOID_SINK) {
@@ -259,6 +354,10 @@ public final class DownstreamBlockingSolver {
      * Backpressure analysis of a single output port.
      */
     public static PortAcceptance analyzeOutputPort(FlowGraph graph, RecipeNode producer, int outputIndex) {
+        return analyzeOutputPort(graph, producer, outputIndex, new Analysis(graph));
+    }
+
+    private static PortAcceptance analyzeOutputPort(FlowGraph graph, RecipeNode producer, int outputIndex, Analysis analysis) {
         if (graph == null || producer == null || outputIndex < 0) {
             return new PortAcceptance(outputIndex, "", 0.0, 0.0, SinkKind.NO_SINK, 0);
         }
@@ -287,7 +386,7 @@ public final class DownstreamBlockingSolver {
         boolean recirculating = recirculatesToProducer(graph, producer, outgoing);
         double accepted = recirculating
                 ? FlowBalanceMatrixSolver.calculateTotalConnectedPortDemand(graph, producer, outputIndex)
-                : capacityAnchoredAppetite(graph, producer, outgoing);
+                : capacityAnchoredAppetite(analysis, outgoing);
         int consumers = countConsumingPorts(graph, outgoing);
         return new PortAcceptance(outputIndex, resourceName, nominal, accepted, SinkKind.CONSUMERS, consumers);
     }
@@ -297,7 +396,7 @@ public final class DownstreamBlockingSolver {
      * edge if the line were running flat out. See {@link #capacityAnchoredAppetite} for why the current
      * throttle must not be used as the yardstick.
      *
-     * <p>Also used by {@code FlowEdgeAllocator} as the weight it splits a producer's output by: the
+     * <p>Also used by {@code FlowEdgeAllocator} as the production weight it splits output by: the
      * distribution between consumers has exactly the same self-reference problem as the ceiling does,
      * so both must be measured from the same anchored figure.
      *
@@ -305,13 +404,7 @@ public final class DownstreamBlockingSolver {
      */
     public static double edgeAppetite(FlowGraph graph, RecipeNode producer, FlowGraph.ConnectionEdge edge) {
         if (graph == null || producer == null || edge == null) return 0.0;
-        RecipeNode consumer = graph.findNodeById(edge.toNodeId());
-        if (consumer == null) return 0.0;
-        double want = consumer.getInputSlotRate(edge.inputIndex(), false);
-        if (want <= RATE_EPSILON) return 0.0;
-        double discount = Math.min(1.0, analyzeNode(graph, consumer).ratio());
-        discount = Math.min(discount, otherFeedCoverage(graph, consumer, producer));
-        return want * Math.max(0.0, discount);
+        return new Analysis(graph).edgeAppetite(edge);
     }
 
     /**
@@ -332,13 +425,12 @@ public final class DownstreamBlockingSolver {
      * feedback loop.
      */
     private static double capacityAnchoredAppetite(
-            FlowGraph graph,
-            RecipeNode producer,
+            Analysis analysis,
             List<FlowGraph.ConnectionEdge> outgoing
     ) {
         double total = 0.0;
         for (FlowGraph.ConnectionEdge edge : outgoing) {
-            total += edgeAppetite(graph, producer, edge);
+            total += analysis.edgeAppetite(edge);
         }
         return total;
     }
@@ -355,7 +447,7 @@ public final class DownstreamBlockingSolver {
      * are combined with {@code min}, a single transient zero would propagate as a hard zero and pin the
      * whole branch at 0.0 instead of leaving it to the forward pass.
      */
-    private static double otherFeedCoverage(FlowGraph graph, RecipeNode consumer, RecipeNode producer) {
+    private static double otherFeedCoverage(FlowGraph graph, RecipeNode consumer, RecipeNode producer, Analysis analysis) {
         if (consumer.isReroute()) return 1.0;
         double coverage = 1.0;
         for (int port = 0; port < consumer.getInputs().size(); port++) {
@@ -378,7 +470,7 @@ public final class DownstreamBlockingSolver {
                     unbounded = true;
                     continue;
                 }
-                capacity += upstream.getOutputSlotRate(in.outputIndex(), false);
+                capacity += analysis.nominalEdgeCapacity(in, new HashSet<>());
             }
             if (!wired || fedByProducer || unbounded) continue;
             coverage = Math.min(coverage, Math.max(0.0, Math.min(1.0, capacity / required)));
@@ -559,13 +651,9 @@ public final class DownstreamBlockingSolver {
     }
 
     private static String resourceName(RecipeNode node, int outputIndex) {
-        try {
-            if (outputIndex >= 0 && outputIndex < node.getOutputs().size()) {
-                String name = node.getOutputs().get(outputIndex).getDisplayName();
-                return name != null ? name : "";
-            }
-        } catch (Throwable ignored) {
-            // display names are cosmetic; never let them break a solve
+        if (outputIndex >= 0 && outputIndex < node.getOutputs().size()) {
+            String name = node.getOutputs().get(outputIndex).getDisplayName();
+            return name != null ? name : "";
         }
         return "";
     }

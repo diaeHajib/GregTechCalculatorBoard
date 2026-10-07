@@ -111,6 +111,7 @@ public final class FixedPointEfficiencySolver {
      * whose outputs cannot be absorbed by downstream demand.
      */
     public static Map<String, Double> computeNodeEfficiencies(FlowGraph graph, LineSolveMode mode) {
+        if (graph != null) graph.setSolvedMode(mode);
         if (mode != null && mode.isBlockingAware()) {
             return computeNodeEfficienciesWithDemand(graph);
         }
@@ -180,13 +181,11 @@ public final class FixedPointEfficiencySolver {
      * <p>Each sweep runs the historical forward pass (a node is throttled by how much supply reaches
      * its inputs) and then a backward pass (a node is throttled by how much its downstream consumers
      * can absorb). Every update can only <em>lower</em> an efficiency, so the iteration descends
-     * monotonically from "the whole line runs at full speed" and converges to the greatest fixed
-     * point satisfying both sets of constraints. That descending monotonicity is what makes the
-     * two-sided solve terminate instead of oscillating.
+     * monotonically from "the whole line runs at full speed". The iteration budget and descending
+     * updates prevent oscillation; the existing loop relaxation remains responsible for recirculation.
      *
-     * <p>Blocking propagates upstream without any explicit graph walk: a producer throttled by its
-     * consumers draws proportionally less from its own suppliers, which lowers those suppliers'
-     * downstream demand and so throttles them in turn.
+     * <p>Hardware-derived acceptance and allocation weights are resolved once for this solve.
+     * Supply still propagates through the forward iterations, independently of current appetite.
      */
     private static Map<String, Double> computeNodeEfficienciesWithDemand(FlowGraph graph) {
         Map<String, Double> effMap = new HashMap<>();
@@ -196,9 +195,14 @@ public final class FixedPointEfficiencySolver {
         for (RecipeNode node : graph.getNodes()) {
             effMap.put(node.getId(), 1.0);
             node.setBlockingInfo(1.0, null);
+            node.setEfficiency(1.0);
         }
 
-        FlowEdgeAllocator.SolverContext context = FlowEdgeAllocator.SolverContext.create(graph);
+        graph.invalidatePortStatsCache();
+        DownstreamBlockingSolver.Analysis analysis = new DownstreamBlockingSolver.Analysis(graph);
+        Map<FlowGraph.ConnectionEdge, Double> weights = analysis.allocationWeights();
+        FlowEdgeAllocator.SolverContext context = new FlowEdgeAllocator.SolverContext(
+                FlowEdgeAllocator.buildEdgeIndex(graph), FlowEdgeAllocator.buildPortRates(graph), weights);
         List<PrecomputedLoopMeta> loopMetas = precomputeLoopMetas(graph, context);
         List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, context);
 
@@ -220,8 +224,7 @@ public final class FixedPointEfficiencySolver {
                 changed = true;
             }
 
-            // Downstream appetite is read from the nodes themselves (getInputSlotRate(.., true) uses
-            // each node's own efficiency), so publish this sweep's values before measuring acceptance.
+            // Publish for graph APIs that read efficiencies directly rather than through effMap.
             for (RecipeNode node : graph.getNodes()) {
                 node.setEfficiency(effMap.getOrDefault(node.getId(), 1.0));
             }
@@ -231,7 +234,7 @@ public final class FixedPointEfficiencySolver {
                     continue;
                 }
                 DownstreamBlockingSolver.NodeAcceptance acceptance =
-                        DownstreamBlockingSolver.analyzeNode(graph, producer);
+                        analysis.analyzeNode(producer);
                 producer.setBlockingInfo(acceptance.ratio(), acceptance.bindingResourceNameOrNull());
                 double previous = effMap.getOrDefault(producer.getId(), 1.0);
                 double next = Math.min(previous, acceptance.ratio());
@@ -252,20 +255,20 @@ public final class FixedPointEfficiencySolver {
             }
         }
 
-        // Refresh backpressure detail against the converged efficiencies so the display reports the
-        // constraint that actually binds, not an intermediate sweep's value.
+        // Publish the hardware ceiling separately from the achieved, possibly feed-limited rate.
         for (RecipeNode node : graph.getNodes()) {
             if (node.isReroute()) {
                 continue;
             }
             DownstreamBlockingSolver.NodeAcceptance acceptance =
-                    DownstreamBlockingSolver.analyzeNode(graph, node);
+                    analysis.analyzeNode(node);
             node.setBlockingInfo(acceptance.ratio(), acceptance.bindingResourceNameOrNull());
         }
 
         LineBottleneckAnalyzer.markBottlenecks(graph, LineSolveMode.SUPPLY_AND_DEMAND);
 
         graph.invalidatePortStatsCache();
+        graph.setProductionAllocationWeights(weights);
 
         return effMap;
     }

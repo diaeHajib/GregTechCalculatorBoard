@@ -1,7 +1,6 @@
 package com.gtceu.calcboard.api.solver;
 
 import com.gtceu.calcboard.api.model.FlowGraph;
-import com.gtceu.calcboard.api.model.IngredientStack;
 import com.gtceu.calcboard.api.model.RecipeNode;
 import com.gtceu.calcboard.api.type.LineSolveMode;
 
@@ -11,6 +10,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.WeakHashMap;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 
 /**
  * Answers one question: <em>if you build one more of some machine on this line, which one buys you the
@@ -51,10 +55,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <h2>Cost</h2>
  *
- * <p>N+1 solves for N machines, on board re-solve only, never per frame. A single-entry cache keyed on
- * the board's full content keeps the steady state free; the key covers every field the solve reads, so
- * any edit that could change the answer misses the cache, and it is keyed on graph identity so two
- * pages can never serve each other's answer.
+ * <p>N trial solves plus baseline/restoration solves for N machines, on board re-solve only, never per
+ * frame. Weak per-graph cache entries compare calculation content, including no-benefit results.
+ * Layout and transient efficiencies do not invalidate the cache.
  */
 public final class LineBottleneckAnalyzer {
 
@@ -68,9 +71,8 @@ public final class LineBottleneckAnalyzer {
      */
     private static final Set<FlowGraph> SWEEPING = ConcurrentHashMap.newKeySet();
 
-    private static long cachedKey = Long.MIN_VALUE;
-    private static String cachedNodeId = null;
-    private static double cachedGain = 0.0;
+    private record CachedResult(CompoundTag content, String nodeId, double gain, Map<String, Double> gains) {}
+    private static final Map<FlowGraph, CachedResult> CACHE = Collections.synchronizedMap(new WeakHashMap<>());
     private static Map<String, Double> lastGains = Map.of();
 
     /**
@@ -99,12 +101,15 @@ public final class LineBottleneckAnalyzer {
             return;
         }
 
-        long key = contentKey(graph, mode);
         String bestId = null;
         double bestGain = 0.0;
+        boolean restore = false;
         try {
-            if (key == cachedKey && cachedNodeId != null) {
-                applyFlag(graph, cachedNodeId, cachedGain);
+            CompoundTag content = contentState(graph, mode);
+            CachedResult cached = CACHE.get(graph);
+            if (cached != null && cached.content().equals(content)) {
+                lastGains = cached.gains();
+                applyFlag(graph, cached.nodeId(), cached.gain());
                 return;
             }
 
@@ -125,11 +130,14 @@ public final class LineBottleneckAnalyzer {
             for (RecipeNode machine : machines) {
                 double count = machine.getMachineCount();
                 if (count <= 0.0) continue;
-                machine.setMachineCount(count + 1.0);
-                FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
-                Map<String, Double> after = exportRates(graph);
-                machine.setMachineCount(count);
-                gains.put(machine.getId(), medianRelativeGain(base, after));
+                restore = true;
+                try {
+                    machine.setMachineCount(count + 1.0);
+                    FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+                    gains.put(machine.getId(), medianRelativeGain(base, exportRates(graph)));
+                } finally {
+                    machine.setMachineCount(count);
+                }
             }
 
             bestGain = GAIN_EPSILON;
@@ -140,19 +148,22 @@ public final class LineBottleneckAnalyzer {
                 }
             }
             if (bestId == null) bestGain = 0.0;
-            lastGains = Map.copyOf(gains);
+            Map<String, Double> measuredGains = Map.copyOf(gains);
 
             // Put the graph back the way we found it - efficiencies, blocking info and caches all
             // follow from this final solve, and the guard keeps it from sweeping again.
             FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+            restore = false;
+            lastGains = measuredGains;
+            CACHE.put(graph, new CachedResult(content, bestId, bestGain, measuredGains));
+            applyFlag(graph, bestId, bestGain);
         } finally {
-            SWEEPING.remove(graph);
+            try {
+                if (restore) FixedPointEfficiencySolver.computeNodeEfficiencies(graph, mode);
+            } finally {
+                SWEEPING.remove(graph);
+            }
         }
-
-        cachedKey = key;
-        cachedNodeId = bestId;
-        cachedGain = bestGain;
-        applyFlag(graph, bestId, cachedGain);
     }
 
     private static void applyFlag(FlowGraph graph, String nodeId, double gain) {
@@ -203,12 +214,9 @@ public final class LineBottleneckAnalyzer {
     }
 
     /**
-     * Content key of everything the sweep reads. Any edit that can change the answer changes the key,
-     * so a stale entry can never be served: machine counts, parallels, target/recipe tier, overclock
-     * mode, recipe timings, every ingredient with its amount, chance and boost, junction supply and
-     * drain configuration, every node-kind flag, the <em>full</em> wiring (endpoints and port indices,
-     * not just a connection count) and the solve mode. A graph's identity is mixed in as well, so two
-     * pages can never serve each other's cached answer.
+     * Diagnostic hash of the calculation state. The cache itself compares the complete state, not
+     * this hash, and uses graph identity. Serialized hardware/properties, nominal adapter rates,
+     * subgraphs, junction allocations and full edge settings participate.
      *
      * <p>Card positions, zoom and pan are deliberately excluded: dragging a card is an edit that cannot
      * change the physics, and hashing the layout would re-run an N+1 solve sweep on every frame of a
@@ -217,69 +225,50 @@ public final class LineBottleneckAnalyzer {
      * <p>Package-private so the invalidation contract can be pinned by a test.
      */
     static long contentKey(FlowGraph graph, LineSolveMode mode) {
-        long h = 1125899906842597L;
-        h = h * 31 + System.identityHashCode(graph);
-        h = h * 31 + (mode != null ? mode.ordinal() : -1);
-        h = h * 31 + graph.getNodes().size();
-        for (RecipeNode node : graph.getNodes()) {
-            if (node == null) {
-                h = h * 31 + 7;
-                continue;
-            }
-            h = h * 31 + node.getId().hashCode();
-            h = h * 31 + (node.isMachine() ? 1 : 0);
-            h = h * 31 + (node.isModule() ? 1 : 0);
-            h = h * 31 + (node.isReroute() ? 1 : 0);
-            h = h * 31 + (node.isBaseNode() ? 1 : 0);
-            h = h * 31 + (node.isGenerator() ? 1 : 0);
-            h = h * 31 + (node.isFusion() ? 1 : 0);
-            h = h * 31 + (node.isVoidSink() ? 1 : 0);
-            h = h * 31 + (node.isExternalSupply() ? 1 : 0);
-            h = h * 31 + (node.isFixedDrain() ? 1 : 0);
-            h = h * 31 + (node.isInfiniteSupply() ? 1 : 0);
-            h = h * 31 + (node.getSteamMode() != null ? node.getSteamMode().ordinal() + 1 : 0);
-            h = h * 31 + Double.hashCode(node.getMachineCount());
-            h = h * 31 + node.getParallel();
-            h = h * 31 + node.getTotalParallel();
-            h = h * 31 + (node.getTargetTier() != null ? node.getTargetTier().ordinal() : -1);
-            h = h * 31 + (node.getRecipeTier() != null ? node.getRecipeTier().ordinal() : -1);
-            h = h * 31 + (node.getOverclockMode() != null ? node.getOverclockMode().ordinal() : -1);
-            h = h * 31 + Double.hashCode(node.getBaseDurationTicks());
-            h = h * 31 + Double.hashCode(node.getBaseEUt());
-            h = h * 31 + (node.getSupplyMode() != null ? node.getSupplyMode().ordinal() : -1);
-            h = h * 31 + Double.hashCode(node.getExternalSupplyRate());
-            h = h * 31 + Double.hashCode(node.getExternalDrainRate());
-            h = h * 31 + node.getCompoundLayerIndex();
-            h = h * 31 + (node.getCompoundGroupId() != null ? node.getCompoundGroupId().hashCode() : 0);
-            List<IngredientStack> ins = node.getInputs();
-            h = h * 31 + ins.size();
-            for (IngredientStack in : ins) {
-                h = mixIngredient(h, in);
-            }
-            List<IngredientStack> outs = node.getOutputs();
-            h = h * 31 + outs.size();
-            for (IngredientStack out : outs) {
-                h = mixIngredient(h, out);
-            }
-        }
-        h = h * 31 + graph.getConnections().size();
-        for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
-            h = h * 31 + (edge.fromNodeId() != null ? edge.fromNodeId().hashCode() : 0);
-            h = h * 31 + edge.outputIndex();
-            h = h * 31 + (edge.toNodeId() != null ? edge.toNodeId().hashCode() : 0);
-            h = h * 31 + edge.inputIndex();
-        }
-        return h;
+        return 31L * System.identityHashCode(graph) + contentState(graph, mode).hashCode();
     }
 
-    private static long mixIngredient(long h, IngredientStack stack) {
-        if (stack == null) return h * 31 + 3;
-        h = h * 31 + stack.getDisplayName().hashCode();
-        h = h * 31 + Double.hashCode(stack.getAmount());
-        h = h * 31 + Double.hashCode(stack.getChance());
-        h = h * 31 + Double.hashCode(stack.getTierChanceBoost());
-        h = h * 31 + (stack.isFluid() ? 1 : 0);
-        h = h * 31 + (stack.isStressUnit() ? 1 : 0);
-        return h;
+    private static CompoundTag contentState(FlowGraph graph, LineSolveMode mode) {
+        CompoundTag state = graphContent(graph, Collections.newSetFromMap(new IdentityHashMap<>()));
+        state.putString("solveMode", mode != null ? mode.name() : LineSolveMode.SUPPLY_ONLY.name());
+        return state.copy();
     }
+
+    private static CompoundTag graphContent(FlowGraph graph, Set<FlowGraph> visited) {
+        CompoundTag state = new CompoundTag();
+        if (!visited.add(graph)) return state;
+        ListTag nodes = new ListTag();
+        for (RecipeNode node : graph.getNodes()) {
+            // Suppress the serializer's embedded graph expansion; traverse each graph once here.
+            CompoundTag tag = node.serializeNBT(Collections.emptySet(), 16);
+            tag.remove("roleData");
+            for (String cosmetic : List.of("posX", "posY", "cardWidth", "cardHeight", "isFlipped",
+                    "hiddenInputs", "hiddenOutputs")) tag.remove(cosmetic);
+            tag.putDouble("allocatedInput", node.getAllocatedInputRate());
+            tag.putDouble("allocatedExport", node.getAllocatedExportRate());
+            ListTag exports = new ListTag();
+            for (var entry : FlowEdgeAllocator.virtualExportDemands(graph, node).entrySet()) {
+                CompoundTag export = entry.getKey().serializeNBT();
+                export.putDouble("demand", entry.getValue());
+                exports.add(export);
+            }
+            tag.put("virtualExports", exports);
+            ListTag rates = new ListTag();
+            for (int i = 0; i < node.getInputs().size(); i++) {
+                rates.add(net.minecraft.nbt.DoubleTag.valueOf(node.getInputSlotRate(i, false)));
+            }
+            for (int i = 0; i < node.getOutputs().size(); i++) {
+                rates.add(net.minecraft.nbt.DoubleTag.valueOf(node.getOutputSlotRate(i, false)));
+            }
+            tag.put("nominalRates", rates);
+            if (node.getSubGraph() != null) tag.put("subGraph", graphContent(node.getSubGraph(), visited));
+            nodes.add(tag);
+        }
+        state.put("nodes", nodes);
+        ListTag edges = new ListTag();
+        for (FlowGraph.ConnectionEdge edge : graph.getConnections()) edges.add(edge.serializeNBT());
+        state.put("edges", edges);
+        return state;
+    }
+
 }

@@ -4,6 +4,8 @@ import com.gtceu.calcboard.api.solver.AutoRatioResult;
 import com.gtceu.calcboard.api.solver.BalanceSummary;
 import com.gtceu.calcboard.api.solver.FlowGraphModuleHandler;
 import com.gtceu.calcboard.api.solver.FlowGraphSolver;
+import com.gtceu.calcboard.api.solver.DownstreamBlockingSolver;
+import com.gtceu.calcboard.api.type.LineSolveMode;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -31,6 +33,26 @@ public class FlowGraph {
     private final AtomicReference<FlowGraphSnapshot> currentSnapshot = new AtomicReference<>(FlowGraphSnapshot.EMPTY);
     private BalanceSummary cachedSummary = null;
     private boolean summaryDirty = true;
+    private Map<ConnectionEdge, Double> productionAllocationWeights = Map.of();
+    private LineSolveMode solvedMode = LineSolveMode.SUPPLY_ONLY;
+
+    public Map<ConnectionEdge, Double> getProductionAllocationWeights() {
+        if (productionAllocationWeights == null) {
+            productionAllocationWeights = solvedMode.isBlockingAware()
+                    ? new DownstreamBlockingSolver.Analysis(this).allocationWeights()
+                    : Map.of();
+        }
+        return productionAllocationWeights;
+    }
+
+    public void setSolvedMode(LineSolveMode mode) {
+        solvedMode = mode != null ? mode : LineSolveMode.SUPPLY_ONLY;
+        productionAllocationWeights = null;
+    }
+
+    public void setProductionAllocationWeights(Map<ConnectionEdge, Double> weights) {
+        productionAllocationWeights = Map.copyOf(weights);
+    }
 
     public FlowGraphSnapshot getSnapshot() {
         FlowGraphSnapshot snap = currentSnapshot.get();
@@ -64,6 +86,7 @@ public class FlowGraph {
 
     public void invalidatePortStatsCache() {
         portStatsCache.clear();
+        productionAllocationWeights = null;
         markSummaryDirty();
         for (RecipeNode n : nodes) {
             n.markOperationalDirty();
@@ -1013,5 +1036,3 @@ public class FlowGraph {
         return FlowGraphSolver.findConnectedBufferNode(this, consumer, inputIndex);
     }
 }
-
-

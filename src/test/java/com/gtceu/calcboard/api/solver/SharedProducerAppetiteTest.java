@@ -32,13 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * invented ones. It is frozen in test resources and therefore does not follow later edits to the live
  * board.
  *
- * <p>Known gap, asserted as <em>documented current behaviour</em> below rather than as correct behaviour:
- * the ceiling is anchored, but the split between the two consumers is still weighted by their current
- * appetite, so the CR is under-served and the mixer over-served. Weighting the split by the same
- * capacity-anchored figure is what fixes it, but doing that inside FlowEdgeAllocator.getEdgeDemand has
- * two measured blockers - the recursive ceiling resolution blows up large graphs (fuzz timeout at 15 s),
- * and the same demand map drives proportional scaling, so it also moves auto-ratio results. See the note
- * in FlowEdgeAllocator.getEdgeDemand.
+ * <p>The allocation must use the same anchored capacity as the producer's ceiling, independently of
+ * the effective demand used by auto-ratio.
  */
 public class SharedProducerAppetiteTest {
 
@@ -103,15 +98,11 @@ public class SharedProducerAppetiteTest {
         assertEquals(16.8, producedPerMinute, 0.05, "shared producer throughput");
         assertTrue(efficiency > 0.5, "shared producer collapsed below its anchored ceiling");
 
-        // The split is still weighted by each consumer's current appetite, so the shares are the known
-        // wrong ones: the reactor under-serves the chemical reactor and over-serves the mixer. Asserted
-        // as a tripwire - when the split is anchored this test must be updated to 7.2 / 9.6, and it will
-        // fail loudly rather than silently pass either way.
         double crShare = receivedPerMinute(graph, cr);
         double mixerShare = receivedPerMinute(graph, mixer);
         assertEquals(16.8, crShare + mixerShare, 0.05, "shares must still add up to the anchored total");
-        assertTrue(crShare < 7.2, "chemical reactor share moved without the test being updated");
-        assertTrue(mixerShare > 9.6, "mixer share moved without the test being updated");
+        assertEquals(7.2, crShare, 0.01, "chemical reactor receives its absolute capacity");
+        assertEquals(9.6, mixerShare, 0.01, "mixer receives its absolute capacity");
     }
 
     /** Nitric acid received through the consumer's nitric-acid port, in B/min. */
