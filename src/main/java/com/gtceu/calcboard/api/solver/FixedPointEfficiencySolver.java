@@ -111,9 +111,15 @@ public final class FixedPointEfficiencySolver {
      * <p>{@link LineSolveMode#SUPPLY_AND_DEMAND} runs the two-sided fixed point described in
      * {@link #computeNodeEfficienciesWithDemand(FlowGraph)}, which additionally throttles producers
      * whose outputs cannot be absorbed by downstream demand.
+     *
+     * <p>{@link LineSolveMode#PRIMED} solves the connected material balances globally, permitting
+     * surplus output to leave the primed line without applying downstream blocking.
      */
     public static Map<String, Double> computeNodeEfficiencies(FlowGraph graph, LineSolveMode mode) {
         if (graph != null) graph.setSolvedMode(mode);
+        if (mode == LineSolveMode.PRIMED) {
+            return PrimedLineSolver.solve(graph);
+        }
         if (mode != null && mode.isBlockingAware()) {
             return computeNodeEfficienciesWithDemand(graph);
         }
@@ -765,6 +771,7 @@ public final class FixedPointEfficiencySolver {
     }
 
     public static PrecomputedDampedLoopMeta findDampedLoopMeta(FlowGraph graph, RecipeNode node, int inIdx) {
+        if (graph != null && graph.isPrimedSolve()) return null;
         if (graph == null || node == null || node.isReroute() || inIdx < 0 || inIdx >= node.getInputs().size()) {
             return null;
         }
@@ -779,6 +786,7 @@ public final class FixedPointEfficiencySolver {
     }
 
     public static PrecomputedDampedLoopMeta findDampedLoopMetaForNode(FlowGraph graph, RecipeNode node) {
+        if (graph != null && graph.isPrimedSolve()) return null;
         if (graph == null || node == null || node.isReroute()) {
             return null;
         }

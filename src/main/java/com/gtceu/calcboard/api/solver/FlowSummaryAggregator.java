@@ -33,6 +33,10 @@ public final class FlowSummaryAggregator {
         double effectiveReq = node.isReroute()
                 ? (FlowBalanceMatrixSolver.calculateTotalConnectedPortEffectiveDemand(graph, node, 0) + (node.isFixedDrain() ? node.getExternalDrainRate() : 0.0))
                 : node.getInputSlotRate(inputIndex, true);
+        if (graph.isPrimedSolve() && node.isReroute() && node.isFixedDrain()) {
+            effectiveReq = graph.getPrimedDrainRate(node.getId())
+                    + FlowBalanceMatrixSolver.calculateTotalConnectedPortEffectiveDemand(graph, node, 0);
+        }
 
         double totalSupplied = 0.0;
         int count = 0;
@@ -184,7 +188,9 @@ public final class FlowSummaryAggregator {
             if (c == null || c.isVoidSink()) {
                 continue;
             }
-            totalDemanded += resolveConnectedDemand(graph, edge, c, produced);
+            totalDemanded += graph.isPrimedSolve()
+                    ? graph.getPrimedFlows().getOrDefault(edge, 0.0)
+                    : resolveConnectedDemand(graph, edge, c, produced);
             count++;
         }
         return new FlowGraphSolver.PortFlowStats(produced, totalDemanded, count, count > 0);
@@ -270,6 +276,16 @@ public final class FlowSummaryAggregator {
             if (nodeIds.contains(edge.fromNodeId()) && nodeIds.contains(edge.toNodeId())) {
                 subGraph.addConnection(edge);
             }
+        }
+        if (graph.isPrimedSolve()) {
+            subGraph.setSolvedMode(com.gtceu.calcboard.api.type.LineSolveMode.PRIMED);
+            Map<String, Double> drains = new HashMap<>();
+            Map<String, Double> exports = new HashMap<>();
+            selectedNodes.forEach(node -> {
+                drains.put(node.getId(), graph.getPrimedDrainRate(node.getId()));
+                exports.put(node.getId(), graph.getPrimedExportRate(node.getId()));
+            });
+            subGraph.setPrimedFlows(graph.getPrimedFlows(), drains, exports);
         }
         for (CanvasGroupFrame frame : graph.getFrames()) {
             if (frame != null && frame.isSharedMachineFrame()) {
@@ -394,6 +410,16 @@ public final class FlowSummaryAggregator {
             } else {
                 rawInputs.put(stack, -delta);
             }
+        }
+        if (graph.isPrimedSolve()) {
+            collectPrimedBoundaries(graph, rawInputs, netOutputs);
+            voidedOutputs.clear();
+            totalVoided.forEach((stack, rate) -> {
+                if (rate > 0.0001) voidedOutputs.put(stack, rate);
+            });
+            balanced.keySet().removeAll(rawInputs.keySet());
+            balanced.keySet().removeAll(netOutputs.keySet());
+            balanced.keySet().removeAll(voidedOutputs.keySet());
         }
 
         double netEUt = totalConsumedEUt - totalGeneratedEUt;
@@ -520,11 +546,49 @@ public final class FlowSummaryAggregator {
                 continue;
             }
             RecipeNode c = graph.findNodeById(outEdge.toNodeId());
-            if (c != null && !c.isVoidSink()) {
+            if (graph.isPrimedSolve()) {
+                connectedDemand += graph.getPrimedFlows().getOrDefault(outEdge, 0.0);
+            } else if (c != null && !c.isVoidSink()) {
                 connectedDemand += FlowBalanceMatrixSolver.getConnectedConsumerDemand(graph, c, outEdge.inputIndex());
             }
         }
         return Math.max(0.0, totalPortOut - connectedDemand);
+    }
+
+    private static void collectPrimedBoundaries(
+            FlowGraph graph, Map<IngredientStack, Double> rawInputs, Map<IngredientStack, Double> netOutputs) {
+        rawInputs.clear();
+        netOutputs.clear();
+        var index = FlowEdgeAllocator.buildEdgeIndex(graph);
+        for (RecipeNode node : graph.getNodes()) {
+            if (node.isBoundaryPin()) continue;
+            if (node.isReroute()) {
+                if (node.isVoidSink() || node.getRerouteIngredient() == null) continue;
+                double incoming = index.getInEdges(node.getId()).stream()
+                        .mapToDouble(edge -> graph.getPrimedFlows().getOrDefault(edge, 0.0)).sum();
+                double outgoing = index.getOutEdges(node.getId()).stream()
+                        .mapToDouble(edge -> graph.getPrimedFlows().getOrDefault(edge, 0.0)).sum();
+                double withdrawn = outgoing + graph.getPrimedDrainRate(node.getId())
+                        + graph.getPrimedExportRate(node.getId());
+                double imported = PrimedLineSolver.junctionImport(node, incoming, withdrawn);
+                double surplus = Math.max(0.0, incoming + imported - withdrawn);
+                if (imported > 0.0001) mergeRate(rawInputs, node.getRerouteIngredient(), imported);
+                if (surplus > 0.0001) mergeRate(netOutputs, node.getRerouteIngredient(), surplus);
+                continue;
+            }
+            for (int port = 0; port < node.getInputs().size(); port++) {
+                if (!index.getInPortEdges(node.getId(), port).isEmpty()) continue;
+                double rate = node.getInputSlotRate(port, true);
+                if (rate > 0.0001) mergeRate(rawInputs, node.getInputs().get(port), rate);
+            }
+            for (int port = 0; port < node.getOutputs().size(); port++) {
+                if (node.isOutputPortVoided(port)) continue;
+                double delivered = index.getOutPortEdges(node.getId(), port).stream()
+                        .mapToDouble(edge -> graph.getPrimedFlows().getOrDefault(edge, 0.0)).sum();
+                double surplus = Math.max(0.0, node.getOutputSlotRate(port, true) - delivered);
+                if (surplus > 0.0001) mergeRate(netOutputs, node.getOutputs().get(port), surplus);
+            }
+        }
     }
 
     private static final class PowerAccumulator {
@@ -820,6 +884,21 @@ public final class FlowSummaryAggregator {
             Map<IngredientStack, Double> totalConsumption,
             Map<IngredientStack, Double> totalVoided
     ) {
+        if (graph.isPrimedSolve() && !node.isVoidSink()) {
+            IngredientStack stack = node.getRerouteIngredient();
+            if (stack == null) return;
+            double incoming = graph.getPrimedFlows().entrySet().stream()
+                    .filter(entry -> entry.getKey().toNodeId().equals(node.getId()))
+                    .mapToDouble(Map.Entry::getValue).sum();
+            double outgoing = graph.getPrimedFlows().entrySet().stream()
+                    .filter(entry -> entry.getKey().fromNodeId().equals(node.getId()))
+                    .mapToDouble(Map.Entry::getValue).sum();
+            double drain = graph.getPrimedDrainRate(node.getId());
+            double exported = graph.getPrimedExportRate(node.getId());
+            mergeRate(totalProduction, stack, PrimedLineSolver.junctionImport(node, incoming, outgoing + drain + exported));
+            mergeRate(totalConsumption, stack, drain + exported);
+            return;
+        }
         if (node.isVoidSink()) {
             aggregateVoidSinkReroute(graph, node, totalVoided);
             return;

@@ -244,6 +244,17 @@ public final class FlowEdgeAllocator {
             double totalProducerRate,
             Map<CrossPageExportTarget, Double> targetDemands
     ) {
+        if (producerGraph != null && producerGraph.isPrimedSolve() && producerNode != null && targetDemands != null) {
+            Map<CrossPageExportTarget, Double> result = new LinkedHashMap<>();
+            for (CrossPageExportTarget target : targetDemands.keySet()) {
+                double rate = producerGraph.getPrimedVirtualFlows().entrySet().stream()
+                        .filter(entry -> entry.getKey().fromNodeId().equals(producerNode.getId())
+                                && entry.getKey().toNodeId().equals("__cross_page__:" + target.targetPageId()))
+                        .mapToDouble(Map.Entry::getValue).sum();
+                result.put(target, rate);
+            }
+            return result;
+        }
         if (producerNode == null || totalProducerRate <= 0.00001 || targetDemands == null || targetDemands.isEmpty()) {
             Map<CrossPageExportTarget, Double> zero = new LinkedHashMap<>();
             if (targetDemands != null) {
@@ -957,6 +968,9 @@ public final class FlowEdgeAllocator {
             SolverContext context
     ) {
         if (graph == null || targetEdge == null) return 0.0;
+        if (graph.isPrimedSolve()) {
+            return graph.getPrimedFlows().getOrDefault(targetEdge, 0.0);
+        }
         RecipeNode producer = graph.findNodeById(targetEdge.fromNodeId());
         if (producer == null || targetEdge.outputIndex() < 0 || (!producer.isReroute() && targetEdge.outputIndex() >= producer.getOutputs().size())) {
             return 0.0;
@@ -1025,14 +1039,14 @@ public final class FlowEdgeAllocator {
                     1.0
             );
             extraEdges.add(edge);
-            double demand = resolveVirtualTargetDemand(flowResult, srcPageId, producer.getId(), target);
+            double demand = resolveVirtualTargetDemand(flowResult, srcPageId, producer.getId(), target, graph.isPrimedSolve());
             extraDemands.put(edge, demand);
         }
 
         for (WorkspaceFlowCoordinator.InterPageLink link : activeLinks) {
             if (processedPages.contains(link.targetPageId())) continue;
             processedPages.add(link.targetPageId());
-            double demand = resolveLinkTargetDemand(flowResult, srcPageId, producer.getId(), link);
+            double demand = resolveLinkTargetDemand(flowResult, srcPageId, producer.getId(), link, graph.isPrimedSolve());
             FlowGraph.ConnectionEdge edge = new FlowGraph.ConnectionEdge(
                     producer.getId(),
                     0,
@@ -1062,7 +1076,8 @@ public final class FlowEdgeAllocator {
             WorkspaceFlowCoordinator.WorkspaceFlowResult flowResult,
             String srcPageId,
             String producerId,
-            WorkspaceFlowCoordinator.InterPageLink link
+            WorkspaceFlowCoordinator.InterPageLink link,
+            boolean primed
     ) {
         BoardPage dstPage = WorkspaceFlowCoordinator.getPage(link.targetPageId());
         if (dstPage == null || dstPage.getGraph() == null) return 0.0;
@@ -1070,6 +1085,10 @@ public final class FlowEdgeAllocator {
                 ? dstPage.getGraph().findNodeById(link.targetNodeId())
                 : WorkspaceFlowCoordinator.findConsumerNode(dstPage, srcPageId, producerId);
         if (consumer == null) return 0.0;
+        if (primed) {
+            return WorkspaceFlowCoordinator.isCircularLink(srcPageId, link.targetPageId()) ? 0.0
+                    : nominalConsumerDemand(dstPage.getGraph(), consumer, 0);
+        }
         if (flowResult != null && flowResult.getDemandRate(consumer.getId()) > 0.0001) {
             return flowResult.getDemandRate(consumer.getId());
         }
@@ -1080,16 +1099,27 @@ public final class FlowEdgeAllocator {
             WorkspaceFlowCoordinator.WorkspaceFlowResult flowResult,
             String srcPageId,
             String producerId,
-            CrossPageExportTarget target
+            CrossPageExportTarget target,
+            boolean primed
     ) {
         BoardPage dstPage = WorkspaceFlowCoordinator.getPage(target.targetPageId());
-        if (dstPage == null) return target.hasFixedLimit() ? target.fixedLimit() : 0.0;
+        if (dstPage == null) return !primed && target.hasFixedLimit() ? target.fixedLimit() : 0.0;
         RecipeNode consumer = WorkspaceFlowCoordinator.findConsumerNode(dstPage, srcPageId, producerId);
-        if (consumer == null) return target.hasFixedLimit() ? target.fixedLimit() : 0.0;
+        if (consumer == null) return !primed && target.hasFixedLimit() ? target.fixedLimit() : 0.0;
+        if (primed) {
+            return WorkspaceFlowCoordinator.isCircularLink(srcPageId, target.targetPageId()) ? 0.0
+                    : nominalConsumerDemand(dstPage.getGraph(), consumer, 0);
+        }
         if (flowResult != null && flowResult.getDemandRate(consumer.getId()) > 0.0001) {
             return flowResult.getDemandRate(consumer.getId());
         }
         return getConnectedConsumerDemand(dstPage.getGraph(), consumer, 0);
+    }
+
+    static double nominalConsumerDemand(FlowGraph graph, RecipeNode consumer, int inputIndex) {
+        Map<String, Double> efficiencies = new HashMap<>();
+        graph.getNodes().forEach(node -> efficiencies.put(node.getId(), 1.0));
+        return getConnectedConsumerDemand(graph, consumer, inputIndex, efficiencies, null);
     }
 
     public static double getEffectiveProducerOutputRate(FlowGraph graph, RecipeNode producer, int outputIndex) {
@@ -1131,6 +1161,19 @@ public final class FlowEdgeAllocator {
                 double prodEff = effMap != null ? effMap.getOrDefault(producer.getId(), producer.getEfficiency()) : producer.getEfficiency();
                 double prodNominalRate = context != null ? context.getOutputRate(producer, outputIndex) : producer.getOutputSlotRate(outputIndex, false);
                 return prodNominalRate * prodEff;
+            }
+
+            if (graph.isPrimedSolve()) {
+                double routed = graph.getPrimedFlows().entrySet().stream()
+                        .filter(entry -> entry.getKey().fromNodeId().equals(producer.getId()))
+                        .mapToDouble(Map.Entry::getValue).sum();
+                double incoming = graph.getPrimedFlows().entrySet().stream()
+                        .filter(entry -> entry.getKey().toNodeId().equals(producer.getId()))
+                        .mapToDouble(Map.Entry::getValue).sum();
+                double drain = graph.getPrimedDrainRate(producer.getId());
+                double exported = graph.getPrimedExportRate(producer.getId());
+                return Math.max(0.0, incoming + PrimedLineSolver.junctionImport(
+                        producer, incoming, routed + drain + exported) - drain);
             }
 
             boolean hasIncoming = false;

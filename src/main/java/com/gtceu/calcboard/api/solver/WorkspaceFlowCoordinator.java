@@ -188,7 +188,14 @@ public final class WorkspaceFlowCoordinator {
         return coordinate(BoardManager.getInstance().getPages());
     }
 
+    private static Set<String> activeCircularPages = Set.of();
+
+    static boolean isCircularLink(String sourcePage, String targetPage) {
+        return activeCircularPages.contains(sourcePage) && activeCircularPages.contains(targetPage);
+    }
+
     public static WorkspaceFlowResult coordinate(List<BoardPage> pages) {
+        activeCircularPages = Set.of();
         if (pages == null || pages.isEmpty()) {
             lastResult = WorkspaceFlowResult.EMPTY;
             lastPageMap = Collections.emptyMap();
@@ -227,6 +234,7 @@ public final class WorkspaceFlowCoordinator {
 
         Map<String, Set<String>> adjacency = buildAdjacencyMap(involvedPages, links);
         CycleDetectionResult cycleResult = detectCyclesTarjan(adjacency, links);
+        activeCircularPages = Set.copyOf(cycleResult.circularPageIds());
 
         List<String> topologicalOrder = computeTopologicalOrder(involvedPages, adjacency, cycleResult.circularPageIds());
 
@@ -728,7 +736,10 @@ public final class WorkspaceFlowCoordinator {
 
     private static double calculateConsumerDemand(FlowGraph graph, RecipeNode consumerNode) {
         if (graph == null || consumerNode == null) return 0.0;
-        double downstreamDemand = FlowEdgeAllocator.getConnectedConsumerDemand(graph, consumerNode, 0);
+        double downstreamDemand = com.gtceu.calcboard.api.type.LineSolveModeHolder.get()
+                == com.gtceu.calcboard.api.type.LineSolveMode.PRIMED
+                ? FlowEdgeAllocator.nominalConsumerDemand(graph, consumerNode, 0)
+                : FlowEdgeAllocator.getConnectedConsumerDemand(graph, consumerNode, 0);
         if (downstreamDemand > 0.0001) {
             return downstreamDemand;
         }
