@@ -34,13 +34,18 @@ public class FlowGraph {
     private BalanceSummary cachedSummary = null;
     private boolean summaryDirty = true;
     private Map<ConnectionEdge, Double> productionAllocationWeights = Map.of();
+    private Map<String, Double> productionCapacityEfficiencies = Map.of();
+    private Map<ConnectionEdge, Double> closedLoopAllocationWeights = Map.of();
     private LineSolveMode solvedMode = LineSolveMode.SUPPLY_ONLY;
 
     public Map<ConnectionEdge, Double> getProductionAllocationWeights() {
         if (productionAllocationWeights == null) {
-            productionAllocationWeights = solvedMode.isBlockingAware()
+            Map<ConnectionEdge, Double> weights = solvedMode.isBlockingAware()
                     ? new DownstreamBlockingSolver.Analysis(this).allocationWeights()
                     : Map.of();
+            Map<ConnectionEdge, Double> combined = new HashMap<>(weights);
+            combined.putAll(closedLoopAllocationWeights);
+            productionAllocationWeights = Map.copyOf(combined);
         }
         return productionAllocationWeights;
     }
@@ -48,10 +53,26 @@ public class FlowGraph {
     public void setSolvedMode(LineSolveMode mode) {
         solvedMode = mode != null ? mode : LineSolveMode.SUPPLY_ONLY;
         productionAllocationWeights = null;
+        productionCapacityEfficiencies = Map.of();
+        closedLoopAllocationWeights = Map.of();
     }
 
     public void setProductionAllocationWeights(Map<ConnectionEdge, Double> weights) {
         productionAllocationWeights = Map.copyOf(weights);
+    }
+
+    public Map<String, Double> getProductionCapacityEfficiencies() {
+        return productionCapacityEfficiencies;
+    }
+
+    public void setProductionCapacityEfficiencies(Map<String, Double> efficiencies) {
+        productionCapacityEfficiencies = Map.copyOf(efficiencies);
+        productionAllocationWeights = null;
+    }
+
+    public void setClosedLoopAllocationWeights(Map<ConnectionEdge, Double> weights) {
+        closedLoopAllocationWeights = Map.copyOf(weights);
+        productionAllocationWeights = null;
     }
 
     public FlowGraphSnapshot getSnapshot() {
