@@ -70,13 +70,37 @@ public final class DownstreamBlockingSolver {
     /** A hardware snapshot for one solve, never shared across graphs or retained after edits. */
     public static final class Analysis {
         private final FlowGraph graph;
+        private final Map<String, Double> capacityEfficiencies;
+        private final FlowEdgeAllocator.CachedEdgeIndex edgeIndex;
+        private final Map<String, Set<String>> components;
         private final Map<String, NodeAcceptance> nodes = new HashMap<>();
         private final Map<FlowGraph.ConnectionEdge, Double> appetites = new HashMap<>();
         private final Set<String> analysing = new HashSet<>();
         private final Set<FlowGraph.ConnectionEdge> visitingEdges = new HashSet<>();
 
         public Analysis(FlowGraph graph) {
+            this(graph, graph != null ? graph.getProductionCapacityEfficiencies() : Map.of());
+        }
+
+        private Analysis(FlowGraph graph, Map<String, Double> capacityEfficiencies) {
+            this(graph, capacityEfficiencies, FlowEdgeAllocator.buildEdgeIndex(graph), new HashMap<>());
+            if (graph != null) {
+                for (Set<String> component : ProcessStabilityAnalyzer.findStronglyConnectedComponents(graph, edgeIndex)) {
+                    for (String id : component) components.put(id, component);
+                }
+            }
+        }
+
+        private Analysis(FlowGraph graph, Map<String, Double> capacityEfficiencies,
+                         FlowEdgeAllocator.CachedEdgeIndex edgeIndex, Map<String, Set<String>> components) {
             this.graph = graph;
+            this.capacityEfficiencies = capacityEfficiencies;
+            this.edgeIndex = edgeIndex;
+            this.components = components;
+        }
+
+        Analysis withCapacityEfficiencies(Map<String, Double> efficiencies) {
+            return new Analysis(graph, efficiencies, edgeIndex, components);
         }
 
         public NodeAcceptance analyzeNode(RecipeNode node) {
@@ -106,7 +130,7 @@ public final class DownstreamBlockingSolver {
                     if (consumer.isInfiniteSupply() || consumer.isVoidSink()) return 0.0;
                     want = consumer.getAllocatedExportRate();
                     if (consumer.isFixedDrain()) want += consumer.getExternalDrainRate();
-                    for (FlowGraph.ConnectionEdge next : edgesFrom(graph, consumer.getId(), 0)) {
+                    for (FlowGraph.ConnectionEdge next : edgeIndex.getOutPortEdges(consumer.getId(), 0)) {
                         want += edgeAppetite(next);
                     }
                     if (consumer.isExternalSupply()) {
@@ -119,13 +143,11 @@ public final class DownstreamBlockingSolver {
                 }
                 // Competing producers share a port's capacity; do not count its whole demand twice.
                 double totalCapacity = 0.0;
-                double ownCapacity = nominalEdgeCapacity(edge, new HashSet<>());
+                double ownCapacity = edgeCapacity(edge, new HashSet<>(), true);
                 int incoming = 0;
-                for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
-                    if (in.toNodeId().equals(edge.toNodeId()) && in.inputIndex() == edge.inputIndex()) {
-                        totalCapacity += nominalEdgeCapacity(in, new HashSet<>());
-                        incoming++;
-                    }
+                for (FlowGraph.ConnectionEdge in : edgeIndex.getInPortEdges(edge.toNodeId(), edge.inputIndex())) {
+                    totalCapacity += edgeCapacity(in, new HashSet<>(), true);
+                    incoming++;
                 }
                 double share = Double.isFinite(totalCapacity) && totalCapacity > RATE_EPSILON
                         ? ownCapacity / totalCapacity : 1.0 / Math.max(1, incoming);
@@ -140,18 +162,23 @@ public final class DownstreamBlockingSolver {
         }
 
         private double nominalEdgeCapacity(FlowGraph.ConnectionEdge edge, Set<String> visited) {
+            return edgeCapacity(edge, visited, false);
+        }
+
+        private double edgeCapacity(FlowGraph.ConnectionEdge edge, Set<String> visited, boolean delivered) {
             RecipeNode node = graph.findNodeById(edge.fromNodeId());
             if (node == null || !visited.add(node.getId())) return 0.0;
             try {
                 double capacity = node.getOutputSlotRate(edge.outputIndex(), false);
+                if (delivered && !node.isReroute()) {
+                    capacity *= capacityEfficiencies.getOrDefault(node.getId(), 1.0);
+                }
                 if (node.isReroute()) {
                     if (node.isInfiniteSupply()) return Double.POSITIVE_INFINITY;
                     boolean wired = false;
-                    for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
-                        if (in.toNodeId().equals(node.getId())) {
-                            wired = true;
-                            capacity += nominalEdgeCapacity(in, visited);
-                        }
+                    for (FlowGraph.ConnectionEdge in : edgeIndex.getInEdges(node.getId())) {
+                        wired = true;
+                        capacity += edgeCapacity(in, visited, delivered);
                     }
                     // Match the forward solver's free-input convention, including a linked junction
                     // whose workspace allocation is not available (e.g. a standalone saved page).
@@ -365,7 +392,7 @@ public final class DownstreamBlockingSolver {
         String resourceName = resourceName(producer, outputIndex);
         double nominal = producer.getOutputSlotRate(outputIndex, false);
 
-        List<FlowGraph.ConnectionEdge> outgoing = edgesFrom(graph, producer.getId(), outputIndex);
+        List<FlowGraph.ConnectionEdge> outgoing = analysis.edgeIndex.getOutPortEdges(producer.getId(), outputIndex);
         if (outgoing.isEmpty()) {
             return new PortAcceptance(outputIndex, resourceName, nominal, 0.0, SinkKind.NO_SINK, 0);
         }
@@ -383,7 +410,8 @@ public final class DownstreamBlockingSolver {
         // (a producer capped at 1.5% of nominal ended up at 0.0002%). Nominal appetite is the
         // self-consistent answer inside a loop, and the supply-side loop solver already accounts
         // for the recirculation ratio, so nothing is double-counted.
-        boolean recirculating = recirculatesToProducer(graph, producer, outgoing);
+        Set<String> component = analysis.components.getOrDefault(producer.getId(), Set.of());
+        boolean recirculating = outgoing.stream().anyMatch(edge -> component.contains(edge.toNodeId()));
         double accepted = recirculating
                 ? FlowBalanceMatrixSolver.calculateTotalConnectedPortDemand(graph, producer, outputIndex)
                 : capacityAnchoredAppetite(analysis, outgoing);
@@ -457,8 +485,7 @@ public final class DownstreamBlockingSolver {
             boolean fedByProducer = false;
             boolean unbounded = false;
             double capacity = 0.0;
-            for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
-                if (!in.toNodeId().equals(consumer.getId()) || in.inputIndex() != port) continue;
+            for (FlowGraph.ConnectionEdge in : analysis.edgeIndex.getInPortEdges(consumer.getId(), port)) {
                 wired = true;
                 if (in.fromNodeId().equals(producer.getId())) {
                     fedByProducer = true;
@@ -476,52 +503,6 @@ public final class DownstreamBlockingSolver {
             coverage = Math.min(coverage, Math.max(0.0, Math.min(1.0, capacity / required)));
         }
         return coverage;
-    }
-
-    /**
-     * @return true when any path leaving this port leads back to the producing node, i.e. the flow
-     *         recirculates and the downstream appetite cannot be treated as an independent,
-     *         one-way constraint
-     */
-    private static boolean recirculatesToProducer(
-            FlowGraph graph,
-            RecipeNode producer,
-            List<FlowGraph.ConnectionEdge> outgoing
-    ) {
-        Deque<Hop> queue = new ArrayDeque<>();
-        Set<String> visited = new HashSet<>();
-        for (FlowGraph.ConnectionEdge edge : outgoing) {
-            queue.add(new Hop(edge.toNodeId(), edge.inputIndex()));
-        }
-        while (!queue.isEmpty()) {
-            Hop hop = queue.poll();
-            if (hop.nodeId().equals(producer.getId())) {
-                return true;
-            }
-            if (!visited.add(hop.nodeId() + ":" + hop.inputIndex())) {
-                continue;
-            }
-            RecipeNode node = graph.findNodeById(hop.nodeId());
-            if (node == null) {
-                continue;
-            }
-            if (node.isReroute()) {
-                // a relay that bleeds flow out of the graph (void sink, fixed drain, export) still
-                // passes whatever its consumers take on to its own outputs
-                for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
-                    if (edge.fromNodeId().equals(node.getId())) {
-                        queue.add(new Hop(edge.toNodeId(), edge.inputIndex()));
-                    }
-                }
-                continue;
-            }
-            for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
-                if (edge.fromNodeId().equals(node.getId())) {
-                    queue.add(new Hop(edge.toNodeId(), edge.inputIndex()));
-                }
-            }
-        }
-        return false;
     }
 
     /**
@@ -638,16 +619,6 @@ public final class DownstreamBlockingSolver {
             }
         }
         return count;
-    }
-
-    private static List<FlowGraph.ConnectionEdge> edgesFrom(FlowGraph graph, String nodeId, int outputIndex) {
-        List<FlowGraph.ConnectionEdge> edges = new ArrayList<>();
-        for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
-            if (edge.fromNodeId().equals(nodeId) && edge.outputIndex() == outputIndex) {
-                edges.add(edge);
-            }
-        }
-        return edges;
     }
 
     private static String resourceName(RecipeNode node, int outputIndex) {

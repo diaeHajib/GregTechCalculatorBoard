@@ -25,6 +25,7 @@ public final class FixedPointEfficiencySolver {
 
     /** Efficiency change below which the solve is considered converged. */
     private static final double EFFICIENCY_EPSILON = 1e-4;
+    private static final double CAPACITY_EPSILON = 1e-9;
 
     public record SelfSustainingResource(
             IngredientStack.Type type,
@@ -184,7 +185,8 @@ public final class FixedPointEfficiencySolver {
      * monotonically from "the whole line runs at full speed". The iteration budget and descending
      * updates prevent oscillation; the existing loop relaxation remains responsible for recirculation.
      *
-     * <p>Hardware-derived acceptance and allocation weights are resolved once for this solve.
+     * <p>Hardware-derived acceptance and allocation weights are fixed within each descending pass.
+     * Shared input reservations are then refined from delivered capacities until stable.
      * Supply still propagates through the forward iterations, independently of current appetite.
      */
     private static Map<String, Double> computeNodeEfficienciesWithDemand(FlowGraph graph) {
@@ -200,12 +202,90 @@ public final class FixedPointEfficiencySolver {
 
         graph.invalidatePortStatsCache();
         DownstreamBlockingSolver.Analysis analysis = new DownstreamBlockingSolver.Analysis(graph);
-        Map<FlowGraph.ConnectionEdge, Double> weights = analysis.allocationWeights();
-        FlowEdgeAllocator.SolverContext context = new FlowEdgeAllocator.SolverContext(
-                FlowEdgeAllocator.buildEdgeIndex(graph), FlowEdgeAllocator.buildPortRates(graph), weights);
-        List<PrecomputedLoopMeta> loopMetas = precomputeLoopMetas(graph, context);
-        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, context);
+        Map<FlowGraph.ConnectionEdge, Double> weights = Map.of();
+        Map<String, Double> capacityEfficiencies = Map.of();
+        boolean sharedInputs = hasSharedInputs(graph);
+        FlowEdgeAllocator.SolverContext structuralContext = FlowEdgeAllocator.SolverContext.create(graph);
+        List<PrecomputedLoopMeta> loopMetas = precomputeLoopMetas(graph, structuralContext);
+        List<PrecomputedDampedLoopMeta> dampedLoopMetas = precomputeDampedLoopMetas(graph, structuralContext);
+        for (int capacityIter = 0; capacityIter < MAX_BLOCKING_ITERATIONS; capacityIter++) {
+            for (RecipeNode node : graph.getNodes()) {
+                effMap.put(node.getId(), 1.0);
+                node.setEfficiency(1.0);
+            }
+            analysis = analysis.withCapacityEfficiencies(capacityEfficiencies);
+            weights = analysis.allocationWeights();
+            FlowEdgeAllocator.SolverContext context = new FlowEdgeAllocator.SolverContext(
+                    structuralContext.edgeIndex(), structuralContext.portRates(), weights);
+            solveDemandEfficiencies(graph, effMap, analysis, context, loopMetas, dampedLoopMetas);
+            if (!sharedInputs || capacitiesConverged(capacityEfficiencies, effMap)
+                    || !hasUnusedSharedReservations(graph, effMap, context)) break;
+            // A nominal reservation can strand capacity when co-producers depend on one another.
+            // Reclaim it using their delivered shares, restarting the descending solve so a
+            // producer can recover capacity instead of remaining pinned to its first reservation.
+            if (capacityIter + 1 < MAX_BLOCKING_ITERATIONS) {
+                capacityEfficiencies = Map.copyOf(effMap);
+            }
+        }
 
+        for (RecipeNode node : graph.getNodes()) {
+            node.setEfficiency(effMap.getOrDefault(node.getId(), 1.0));
+            if (!node.isReroute()) {
+                DownstreamBlockingSolver.NodeAcceptance acceptance = analysis.analyzeNode(node);
+                node.setBlockingInfo(acceptance.ratio(), acceptance.bindingResourceNameOrNull());
+            }
+        }
+
+        LineBottleneckAnalyzer.markBottlenecks(graph, LineSolveMode.SUPPLY_AND_DEMAND);
+        graph.invalidatePortStatsCache();
+        graph.setProductionCapacityEfficiencies(capacityEfficiencies);
+        graph.setProductionAllocationWeights(weights);
+        return effMap;
+    }
+
+    private static boolean hasSharedInputs(FlowGraph graph) {
+        Set<FlowGraph.PortKey> inputs = new HashSet<>();
+        for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
+            if (!inputs.add(new FlowGraph.PortKey(edge.toNodeId(), true, edge.inputIndex()))) return true;
+        }
+        return false;
+    }
+
+    private static boolean capacitiesConverged(Map<String, Double> previous, Map<String, Double> current) {
+        if (previous.isEmpty()) return false;
+        for (Map.Entry<String, Double> entry : current.entrySet()) {
+            if (Math.abs(entry.getValue() - previous.getOrDefault(entry.getKey(), 1.0)) > CAPACITY_EPSILON) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasUnusedSharedReservations(
+            FlowGraph graph,
+            Map<String, Double> efficiencies,
+            FlowEdgeAllocator.SolverContext context
+    ) {
+        for (List<FlowGraph.ConnectionEdge> incoming : context.edgeIndex().inPortEdges().values()) {
+            if (incoming.size() < 2) continue;
+            double reserved = 0.0;
+            for (FlowGraph.ConnectionEdge edge : incoming) {
+                reserved += context.allocationWeights().getOrDefault(edge, 0.0);
+            }
+            double supplied = computeIncomingSupply(graph, incoming, efficiencies, context);
+            if (supplied < reserved - Math.max(1e-6, reserved * CAPACITY_EPSILON)) return true;
+        }
+        return false;
+    }
+
+    private static void solveDemandEfficiencies(
+            FlowGraph graph,
+            Map<String, Double> effMap,
+            DownstreamBlockingSolver.Analysis analysis,
+            FlowEdgeAllocator.SolverContext context,
+            List<PrecomputedLoopMeta> loopMetas,
+            List<PrecomputedDampedLoopMeta> dampedLoopMetas
+    ) {
         for (int iter = 0; iter < MAX_BLOCKING_ITERATIONS; iter++) {
             boolean changed = false;
             List<SelfSustainingLoop> loops = evaluateLoops(graph, loopMetas, effMap, context);
@@ -247,30 +327,6 @@ public final class FixedPointEfficiencySolver {
 
             if (!changed) break;
         }
-
-        for (RecipeNode node : graph.getNodes()) {
-            Double finalEff = effMap.get(node.getId());
-            if (finalEff != null) {
-                node.setEfficiency(finalEff);
-            }
-        }
-
-        // Publish the hardware ceiling separately from the achieved, possibly feed-limited rate.
-        for (RecipeNode node : graph.getNodes()) {
-            if (node.isReroute()) {
-                continue;
-            }
-            DownstreamBlockingSolver.NodeAcceptance acceptance =
-                    analysis.analyzeNode(node);
-            node.setBlockingInfo(acceptance.ratio(), acceptance.bindingResourceNameOrNull());
-        }
-
-        LineBottleneckAnalyzer.markBottlenecks(graph, LineSolveMode.SUPPLY_AND_DEMAND);
-
-        graph.invalidatePortStatsCache();
-        graph.setProductionAllocationWeights(weights);
-
-        return effMap;
     }
 
     private static boolean propagateCompoundBottlenecks(FlowGraph graph, Map<String, Double> effMap) {
