@@ -24,6 +24,7 @@ public final class AutoRatioEngine {
 
     public static final double MAX_SINGLE_SCALE_RATIO = 100.0;
     public static final double MAX_AUTO_RATIO_MACHINE_COUNT = 100_000.0;
+    private static final double FRACTIONAL_COUNT_SCALE = 100_000_000.0;
 
     private AutoRatioEngine() {}
 
@@ -38,7 +39,7 @@ public final class AutoRatioEngine {
             return Math.max(0.0001, Math.round(rawCount * 10000.0) / 10000.0);
         }
         if (!integerCounts) {
-            return Math.max(0.0001, Math.round(rawCount * 10000.0) / 10000.0);
+            return quantizeFractionalCount(rawCount);
         }
         return switch (mode) {
             case FLOOR -> Math.max(1.0, Math.floor(rawCount + 1e-6));
@@ -70,7 +71,7 @@ public final class AutoRatioEngine {
         if (anchor.isReroute()) {
             targetAnchorCount = 1.0;
         } else if (!integerCounts || preserveFractional) {
-            targetAnchorCount = Math.max(0.0001, Math.round(currentAnchorCount * 10000.0) / 10000.0);
+            targetAnchorCount = quantizeFractionalCount(currentAnchorCount);
         } else {
             targetAnchorCount = quantizeMachineCount(graph, anchor, currentAnchorCount, FlowBalanceMatrixSolver.CountRoundingMode.CEIL, true);
         }
@@ -445,8 +446,12 @@ public final class AutoRatioEngine {
             double scaledCount = n.getMachineCount() * targetEff;
             double newCount = integerCounts
                     ? quantizeMachineCount(graph, n, scaledCount, FlowBalanceMatrixSolver.CountRoundingMode.CEIL, true)
-                    : Math.max(0.0001, Math.round(scaledCount * 10000.0) / 10000.0);
+                    : quantizeFractionalCount(scaledCount);
             n.setMachineCount(newCount);
         }
+    }
+
+    private static double quantizeFractionalCount(double count) {
+        return Math.max(0.0001, Math.round(count * FRACTIONAL_COUNT_SCALE) / FRACTIONAL_COUNT_SCALE);
     }
 }

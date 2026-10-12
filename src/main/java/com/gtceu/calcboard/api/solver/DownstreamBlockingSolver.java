@@ -118,18 +118,7 @@ public final class DownstreamBlockingSolver {
                             otherFeedCoverage(graph, consumer, producer, this));
                 }
                 // Competing producers share a port's capacity; do not count its whole demand twice.
-                double totalCapacity = 0.0;
-                double ownCapacity = nominalEdgeCapacity(edge, new HashSet<>());
-                int incoming = 0;
-                for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
-                    if (in.toNodeId().equals(edge.toNodeId()) && in.inputIndex() == edge.inputIndex()) {
-                        totalCapacity += nominalEdgeCapacity(in, new HashSet<>());
-                        incoming++;
-                    }
-                }
-                double share = Double.isFinite(totalCapacity) && totalCapacity > RATE_EPSILON
-                        ? ownCapacity / totalCapacity : 1.0 / Math.max(1, incoming);
-                want *= share;
+                want *= capacityShare(edge);
                 if (edge.hasFixedLimit()) want = Math.min(want, edge.fixedFlowLimit());
                 want = Math.max(0.0, want);
                 appetites.put(edge, want);
@@ -169,6 +158,69 @@ public final class DownstreamBlockingSolver {
         public Map<FlowGraph.ConnectionEdge, Double> allocationWeights() {
             for (FlowGraph.ConnectionEdge edge : graph.getConnections()) edgeAppetite(edge);
             return Map.copyOf(appetites);
+        }
+
+        private double nominalConnectedDemand(List<FlowGraph.ConnectionEdge> outgoing) {
+            double demand = 0.0;
+            Set<FlowGraph.ConnectionEdge> visiting = new HashSet<>();
+            for (FlowGraph.ConnectionEdge edge : outgoing) {
+                demand += nominalEdgeDemand(edge, visiting);
+            }
+            return demand;
+        }
+
+        private double nominalEdgeDemand(
+                FlowGraph.ConnectionEdge edge,
+                Set<FlowGraph.ConnectionEdge> visiting
+        ) {
+            if (!visiting.add(edge)) return 0.0;
+            try {
+                RecipeNode consumer = graph.findNodeById(edge.toNodeId());
+                if (consumer == null || consumer.isVoidSink() || consumer.isInfiniteSupply()) return 0.0;
+                double want;
+                if (consumer.isReroute()) {
+                    want = consumer.getAllocatedExportRate();
+                    if (consumer.isFixedDrain()) want += consumer.getExternalDrainRate();
+                    for (FlowGraph.ConnectionEdge next : edgesFrom(graph, consumer.getId(), 0)) {
+                        want += nominalEdgeDemand(next, visiting);
+                    }
+                    if (consumer.isExternalSupply()) {
+                        want = Math.max(0.0, want - consumer.getExternalSupplyRate());
+                    }
+                } else if (edge.inputIndex() >= 0 && edge.inputIndex() < consumer.getInputs().size()) {
+                    want = consumer.getInputSlotRate(edge.inputIndex(), false);
+                } else {
+                    return 0.0;
+                }
+                want *= capacityShare(edge);
+                if (edge.hasFixedLimit()) want = Math.min(want, edge.fixedFlowLimit());
+                return Math.max(0.0, want);
+            } finally {
+                visiting.remove(edge);
+            }
+        }
+
+        private double capacityShare(FlowGraph.ConnectionEdge edge) {
+            double ownCapacity = nominalEdgeCapacity(edge, new HashSet<>());
+            double finiteCapacity = 0.0;
+            int infiniteCapacityEdges = 0;
+            int incoming = 0;
+            for (FlowGraph.ConnectionEdge in : graph.getConnections()) {
+                if (!in.toNodeId().equals(edge.toNodeId()) || in.inputIndex() != edge.inputIndex()) continue;
+                double capacity = nominalEdgeCapacity(in, new HashSet<>());
+                if (Double.isInfinite(capacity)) {
+                    infiniteCapacityEdges++;
+                } else {
+                    finiteCapacity += Math.max(0.0, capacity);
+                }
+                incoming++;
+            }
+            if (infiniteCapacityEdges > 0) {
+                return Double.isInfinite(ownCapacity) ? 1.0 / infiniteCapacityEdges : 0.0;
+            }
+            return finiteCapacity > RATE_EPSILON
+                    ? Math.max(0.0, ownCapacity) / finiteCapacity
+                    : 1.0 / Math.max(1, incoming);
         }
     }
 
@@ -375,17 +427,13 @@ public final class DownstreamBlockingSolver {
             return new PortAcceptance(outputIndex, resourceName, nominal, 0.0, kind, 0);
         }
 
-        // A port whose flow can find its way back to its own producer is part of a recirculating
-        // loop. There the consumer's appetite is *self-referential*: the loop consumes whatever it
-        // produces, so discounting its appetite by its own current throttle makes every sweep
-        // multiply the producer's efficiency by another factor below one. The product of those
-        // factors drives the entire branch to zero - the collapse this mode showed on real boards
-        // (a producer capped at 1.5% of nominal ended up at 0.0002%). Nominal appetite is the
-        // self-consistent answer inside a loop, and the supply-side loop solver already accounts
-        // for the recirculation ratio, so nothing is double-counted.
+        // Inside a recirculation loop, output appetite is self-referential. Use nominal consumer
+        // demand, split among competing producers by their nominal capacities: recursively
+        // discounting consumer acceptance ratchets the loop down, while the historical equal split
+        // falsely blocks unequal producers in an otherwise balanced loop.
         boolean recirculating = recirculatesToProducer(graph, producer, outgoing);
         double accepted = recirculating
-                ? FlowBalanceMatrixSolver.calculateTotalConnectedPortDemand(graph, producer, outputIndex)
+                ? analysis.nominalConnectedDemand(outgoing)
                 : capacityAnchoredAppetite(analysis, outgoing);
         int consumers = countConsumingPorts(graph, outgoing);
         return new PortAcceptance(outputIndex, resourceName, nominal, accepted, SinkKind.CONSUMERS, consumers);
@@ -479,9 +527,7 @@ public final class DownstreamBlockingSolver {
     }
 
     /**
-     * @return true when any path leaving this port leads back to the producing node, i.e. the flow
-     *         recirculates and the downstream appetite cannot be treated as an independent,
-     *         one-way constraint
+     * @return true when any path leaving this port leads back to the producing node
      */
     private static boolean recirculatesToProducer(
             FlowGraph graph,
@@ -502,19 +548,7 @@ public final class DownstreamBlockingSolver {
                 continue;
             }
             RecipeNode node = graph.findNodeById(hop.nodeId());
-            if (node == null) {
-                continue;
-            }
-            if (node.isReroute()) {
-                // a relay that bleeds flow out of the graph (void sink, fixed drain, export) still
-                // passes whatever its consumers take on to its own outputs
-                for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
-                    if (edge.fromNodeId().equals(node.getId())) {
-                        queue.add(new Hop(edge.toNodeId(), edge.inputIndex()));
-                    }
-                }
-                continue;
-            }
+            if (node == null) continue;
             for (FlowGraph.ConnectionEdge edge : graph.getConnections()) {
                 if (edge.fromNodeId().equals(node.getId())) {
                     queue.add(new Hop(edge.toNodeId(), edge.inputIndex()));
